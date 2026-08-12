@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="ic_launcher_background">#0F1112</color>
+    <color name="black">#000000</color>
+    <color name="Black">#000000</color>
+    <color name="white">#FFFFFF</color>
+    <color name="Red">#FF0000</color>
+    <color name="Navy">#000080</color>
+    <color name="End_btn_Pressed">#D32F2F</color>
+    <color name="Start_btn_Pressed">#F44336</color>
+    <color name="Start_btn_Normal">#00BCD4</color>
+    <color name="End_btn_Normal">#0097A7</color>
+    <color name="note_background">#FFFFFF</color>
+    <color name="note_stroke">#BDBDBD</color>
+    <color name="list_item_background">#FFFFFF</color>
+    <color name="list_item_pressed">#EEEEEE</color>
+</resources>
