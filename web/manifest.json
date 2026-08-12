@@ -1,6 +1,6 @@
 {
-    "name": "my_nots_flutter",
-    "short_name": "my_nots_flutter",
+    "name": "مفكرتي",
+    "short_name": "مفكرتي",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#0175C2",

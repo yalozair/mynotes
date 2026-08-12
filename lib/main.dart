@@ -157,7 +157,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
 
         return MaterialApp(
           navigatorKey: appNavigatorKey,
-          title: 'ملاحظاتي الذكية',
+          title: 'مفكرتي',
           debugShowCheckedModeBanner: false,
           themeMode: settings.themeMode,
           theme: ThemeData(

@@ -15,9 +15,9 @@ import '../helpers/encryption_helper.dart';
 import '../helpers/media_helper.dart';
 import '../helpers/pdf_helper.dart';
 import '../helpers/sticky_note_helper.dart';
+import '../helpers/arabic_font_catalog.dart';
 import '../helpers/export_helper.dart';
 import '../helpers/analytics_helper.dart';
-import '../helpers/reminder_helper.dart';
 import './canvas_screen.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
@@ -39,6 +39,7 @@ class NoteEditorScreen extends StatefulWidget {
 class _NoteEditorScreenState extends State<NoteEditorScreen> {
   late QuillController _controller;
   final TextEditingController _titleController = TextEditingController();
+  final TextEditingController _fontSizeController = TextEditingController();
   final FocusNode _focusNode = FocusNode();
   
   final _storageService = StorageService();
@@ -72,6 +73,7 @@ class _NoteEditorScreenState extends State<NoteEditorScreen> {
       _category = _currentNote!.category;
       _fontName = _currentNote!.fontName;
       _fontSizeBase = _currentNote!.fontSize.toDouble();
+      _fontSizeController.text = _fontSizeBase.toInt().toString();
       _isRtl = _currentNote!.isRtl;
       _reminderTime = _currentNote!.reminderTime;
       _reminderRepeat = _currentNote!.reminderRepeat;
@@ -99,6 +101,7 @@ class _NoteEditorScreenState extends State<NoteEditorScreen> {
       }
     } else {
       _controller = QuillController.basic();
+      _fontSizeController.text = _fontSizeBase.toInt().toString();
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) _focusNode.requestFocus();
       });
@@ -109,6 +112,7 @@ class _NoteEditorScreenState extends State<NoteEditorScreen> {
       if (!_isDirty && mounted) {
         setState(() => _isDirty = true);
       }
+      if (mounted) setState(() {});
     });
 
     _titleController.addListener(() {
@@ -117,6 +121,8 @@ class _NoteEditorScreenState extends State<NoteEditorScreen> {
         setState(() => _isDirty = true);
       }
     });
+
+    _fontSizeController.text = _fontSizeBase.toInt().toString();
   }
 
   Future<void> _loadCustomColors() async {
@@ -141,6 +147,7 @@ class _NoteEditorScreenState extends State<NoteEditorScreen> {
   void dispose() {
     _controller.dispose();
     _titleController.dispose();
+    _fontSizeController.dispose();
     _focusNode.dispose();
     super.dispose();
   }
@@ -328,61 +335,15 @@ class _NoteEditorScreenState extends State<NoteEditorScreen> {
   }
 
   void _showFontPicker() {
-    final fonts = [
-      {'name': 'Cairo', 'sample': 'مرحبا بك في ملاحظاتي الذكية'},
-      {'name': 'Amiri', 'sample': 'الخط الأميري العربي الفاخر'},
-      {'name': 'Lateef', 'sample': 'خط لطيف الأنيق والمريح'},
-      {'name': 'Reem Kufi', 'sample': 'خط ريم كوفي الكوفي المودرن'},
-      {'name': 'Tajawal', 'sample': 'خط تجول العصري والمميز'},
-      {'name': 'Changa', 'sample': 'خط شنجا القوي والواضح'},
-      {'name': 'Scheherazade New', 'sample': 'خط شهرزاد التراثي'},
-      {'name': 'Aref Ruqaa', 'sample': 'خط الرقعة العربي'},
-    ];
-
-    showModalBottomSheet(
+    ArabicFontCatalog.showPicker(
       context: context,
-      isScrollControlled: true,
-      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
-      builder: (ctx) => DraggableScrollableSheet(
-        initialChildSize: 0.6,
-        maxChildSize: 0.9,
-        expand: false,
-        builder: (_, scrollController) => Column(
-          children: [
-            const Padding(
-              padding: EdgeInsets.all(16.0),
-              child: Text('اختر الخط المناسب', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 20)),
-            ),
-            Expanded(
-              child: ListView.builder(
-                controller: scrollController,
-                itemCount: fonts.length,
-                itemBuilder: (ctx, i) => Card(
-                  margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-                  elevation: 0,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                  color: _fontName == fonts[i]['name'] ? Theme.of(context).primaryColor.withValues(alpha: 0.1) : null,
-                  child: ListTile(
-                    title: Text(fonts[i]['name']!, style: const TextStyle(fontWeight: FontWeight.bold)),
-                    subtitle: Padding(
-                      padding: const EdgeInsets.only(top: 8.0),
-                      child: Text(fonts[i]['sample']!, style: GoogleFonts.getFont(fonts[i]['name']!, fontSize: 18)),
-                    ),
-                    onTap: () {
-                      setState(() {
-                        _fontName = fonts[i]['name']!;
-                        _isDirty = true;
-                      });
-                      Navigator.pop(context);
-                    },
-                  ),
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
+      selectedFontId: _fontName,
+      onSelected: (fontId) {
+        setState(() {
+          _fontName = fontId;
+          _isDirty = true;
+        });
+      },
     );
   }
 
@@ -518,10 +479,70 @@ class _NoteEditorScreenState extends State<NoteEditorScreen> {
     );
   }
 
-  void _handleZoom(double delta) {
+  void _setFontSize(double size) {
+    final clamped = size.clamp(8.0, 96.0);
     setState(() {
-      _fontSizeBase = (_fontSizeBase + delta).clamp(8.0, 72.0);
+      _fontSizeBase = clamped;
+      _fontSizeController.text = clamped.toInt().toString();
+      _isDirty = true;
     });
+  }
+
+  void _handleZoom(double delta) => _setFontSize(_fontSizeBase + delta);
+
+  void _copySelection() => _controller.clipboardSelection(true);
+
+  void _cutSelection() => _controller.clipboardSelection(false);
+
+  Future<void> _pasteSelection() async {
+    await _controller.clipboardPaste(updateEditor: () {
+      if (mounted) setState(() => _isDirty = true);
+    });
+  }
+
+  void _selectAllText() {
+    final length = _controller.document.length - 1;
+    if (length <= 0) return;
+    _controller.updateSelection(
+      TextSelection(baseOffset: 0, extentOffset: length),
+      ChangeSource.local,
+    );
+  }
+
+  Widget _buildSelectionActions() {
+    if (_controller.selection.isCollapsed) return const SizedBox.shrink();
+    return Material(
+      elevation: 2,
+      color: Theme.of(context).colorScheme.surfaceContainerHighest,
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: 4),
+        child: Row(
+          children: [
+            IconButton(
+              icon: const Icon(Icons.content_copy, size: 20),
+              tooltip: 'نسخ',
+              onPressed: _copySelection,
+            ),
+            IconButton(
+              icon: const Icon(Icons.content_cut, size: 20),
+              tooltip: 'قص',
+              onPressed: _cutSelection,
+            ),
+            IconButton(
+              icon: const Icon(Icons.content_paste, size: 20),
+              tooltip: 'لصق',
+              onPressed: _pasteSelection,
+            ),
+            IconButton(
+              icon: const Icon(Icons.select_all, size: 20),
+              tooltip: 'تحديد الكل',
+              onPressed: _selectAllText,
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   void _toggleSpeech() async {
@@ -884,25 +905,6 @@ class _NoteEditorScreenState extends State<NoteEditorScreen> {
         ),
         body: Column(
           children: [
-            if (!_focusMode)
-            QuillSimpleToolbar(
-              controller: _controller,
-              config: const QuillSimpleToolbarConfig(
-                multiRowsDisplay: false,
-                showFontSize: true,
-                showFontFamily: true,
-                showBoldButton: true,
-                showItalicButton: true,
-                showUnderLineButton: true,
-                showStrikeThrough: true,
-                showColorButton: true,
-                showBackgroundColorButton: true,
-                showAlignmentButtons: true,
-                showDirection: true,
-                showListNumbers: true,
-                showListBullets: true,
-              ),
-            ),
             Expanded(
               child: Listener(
                 onPointerSignal: (pointerSignal) {
@@ -931,7 +933,7 @@ class _NoteEditorScreenState extends State<NoteEditorScreen> {
                           Positioned.fill(
                             child: CustomPaint(
                               painter: RuledPaperPainter(
-                                lineHeight: _fontSizeBase + 12, // Sync lines with font size
+                                lineHeight: _fontSizeBase + 12,
                                 showLineNumbers: settings.showLineNumbers,
                               ),
                             ),
@@ -948,6 +950,7 @@ class _NoteEditorScreenState extends State<NoteEditorScreen> {
                               padding: EdgeInsets.zero,
                               expands: true,
                               autoFocus: false,
+                              enableSelectionToolbar: false,
                               textSelectionThemeData: TextSelectionThemeData(
                                 selectionColor: Theme.of(context).primaryColor.withValues(alpha: 0.3),
                               ),
@@ -976,6 +979,26 @@ class _NoteEditorScreenState extends State<NoteEditorScreen> {
                 ),
               ),
             ),
+            if (!_focusMode) _buildSelectionActions(),
+            if (!_focusMode)
+            QuillSimpleToolbar(
+              controller: _controller,
+              config: const QuillSimpleToolbarConfig(
+                multiRowsDisplay: false,
+                showFontSize: false,
+                showFontFamily: false,
+                showBoldButton: true,
+                showItalicButton: true,
+                showUnderLineButton: true,
+                showStrikeThrough: true,
+                showColorButton: true,
+                showBackgroundColorButton: true,
+                showAlignmentButtons: true,
+                showDirection: true,
+                showListNumbers: true,
+                showListBullets: true,
+              ),
+            ),
             if (!_focusMode) _buildBottomBar(),
           ],
         ),
@@ -986,7 +1009,7 @@ class _NoteEditorScreenState extends State<NoteEditorScreen> {
   Widget _buildBottomBar() {
     final isDark = _isColorDark(_cardColor);
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
       decoration: BoxDecoration(
         color: Theme.of(context).scaffoldBackgroundColor,
         border: Border(top: BorderSide(color: Theme.of(context).dividerColor, width: 0.5)),
@@ -1003,6 +1026,42 @@ class _NoteEditorScreenState extends State<NoteEditorScreen> {
             onChanged: (val) => setState(() { _category = val!; _isDirty = true; }),
           ),
           const Spacer(),
+          const Icon(Icons.format_size, size: 18),
+          IconButton(
+            icon: const Icon(Icons.remove, size: 18),
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+            onPressed: () => _setFontSize(_fontSizeBase - 1),
+          ),
+          SizedBox(
+            width: 44,
+            height: 34,
+            child: TextField(
+              controller: _fontSizeController,
+              keyboardType: TextInputType.number,
+              textAlign: TextAlign.center,
+              style: const TextStyle(fontSize: 14),
+              decoration: const InputDecoration(
+                isDense: true,
+                contentPadding: EdgeInsets.symmetric(vertical: 8),
+                border: OutlineInputBorder(),
+              ),
+              onSubmitted: (value) {
+                final parsed = int.tryParse(value.trim());
+                if (parsed != null) {
+                  _setFontSize(parsed.toDouble());
+                } else {
+                  _fontSizeController.text = _fontSizeBase.toInt().toString();
+                }
+              },
+            ),
+          ),
+          IconButton(
+            icon: const Icon(Icons.add, size: 18),
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+            onPressed: () => _setFontSize(_fontSizeBase + 1),
+          ),
           if (_customColors.isNotEmpty)
             ..._customColors.reversed.take(3).map((c) => GestureDetector(
               onTap: () => setState(() { _cardColor = c; _isDirty = true; }),

@@ -2,14 +2,25 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
+import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
 import '../helpers/encryption_helper.dart';
 import '../helpers/db_helper.dart';
 import '../models/note.dart';
 
+enum BackupExportStatus { cancelled, success, failed }
+
+class BackupExportResult {
+  final BackupExportStatus status;
+  final String? path;
+
+  const BackupExportResult(this.status, [this.path]);
+}
+
 class BackupHelper {
   static const backupExtension = 'mynotes';
 
-  static Future<String?> exportEncryptedBackup() async {
+  static Future<BackupExportResult> exportEncryptedBackup() async {
     try {
       final notes = await DBHelper().getNotes(deleted: false);
       final trash = await DBHelper().getNotes(deleted: true);
@@ -19,19 +30,27 @@ class BackupHelper {
         'notes': [...notes, ...trash].map((n) => n.toMap()).toList(),
       });
       final encrypted = EncryptionHelper.encryptText(payload);
+      final fileName = 'mynotes_backup_${DateTime.now().millisecondsSinceEpoch}.$backupExtension';
 
-      final path = await FilePicker.saveFile(
-        dialogTitle: 'تصدير نسخة احتياطية مشفّرة',
-        fileName: 'mynotes_backup_${DateTime.now().millisecondsSinceEpoch}.$backupExtension',
-        type: FileType.custom,
-        allowedExtensions: [backupExtension],
-      );
-      if (path == null) return null;
+      String? path;
+      if (Platform.isAndroid || Platform.isIOS) {
+        final dir = await getApplicationDocumentsDirectory();
+        path = p.join(dir.path, fileName);
+      } else {
+        path = await FilePicker.saveFile(
+          dialogTitle: 'تصدير نسخة احتياطية مشفّرة',
+          fileName: fileName,
+          type: FileType.custom,
+          allowedExtensions: [backupExtension],
+        );
+        if (path == null) return const BackupExportResult(BackupExportStatus.cancelled);
+      }
+
       await File(path).writeAsString(encrypted, encoding: utf8);
-      return path;
+      return BackupExportResult(BackupExportStatus.success, path);
     } catch (e) {
       debugPrint('Backup export failed: $e');
-      return null;
+      return const BackupExportResult(BackupExportStatus.failed);
     }
   }
 

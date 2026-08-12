@@ -21,7 +21,7 @@ class StickyNoteHelper {
 
     const WindowsInitializationSettings initializationSettingsWindows =
         WindowsInitializationSettings(
-          appName: 'ملاحظاتي الذكية',
+          appName: 'مفكرتي',
           appUserModelId: 'com.alozair.my_nots.MyNotesApp',
           guid: '778a7c24-4f0b-4e00-b6f7-c2579698c0b2',
         );

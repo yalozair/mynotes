@@ -5,6 +5,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import '../helpers/auth_helper.dart';
 import '../providers/settings_provider.dart';
 import '../providers/note_provider.dart';
+import '../helpers/arabic_font_catalog.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import '../helpers/update_helper.dart';
@@ -205,12 +206,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
             title: const Text('تصدير نسخة احتياطية مشفّرة'),
             subtitle: const Text('ملف .mynotes محلي ومشفّر'),
             onTap: () async {
-              final path = await BackupHelper.exportEncryptedBackup();
+              final result = await BackupHelper.exportEncryptedBackup();
               if (!mounted) return;
+              final message = switch (result.status) {
+                BackupExportStatus.success => 'تم الحفظ في:\n${result.path}',
+                BackupExportStatus.cancelled => 'تم إلغاء التصدير',
+                BackupExportStatus.failed => 'تعذر التصدير — حاول مجدداً',
+              };
               ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(content: Text(path != null ? 'تم الحفظ: $path' : 'تعذر التصدير')),
+                SnackBar(content: Text(message)),
               );
-              if (path != null) AnalyticsHelper.backupExported();
+              if (result.status == BackupExportStatus.success) AnalyticsHelper.backupExported();
             },
           ),
           ListTile(
@@ -272,7 +278,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           FutureBuilder(
             future: PackageInfo.fromPlatform(),
             builder: (context, snap) {
-              final version = snap.data?.version ?? '1.0.1';
+              final version = snap.data?.version ?? '1.0.2';
               return ListTile(
                 title: const Text('رقم الإصدار'),
                 subtitle: Text('v$version'),
@@ -458,23 +464,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   void _showFontPickerDialog(BuildContext context, SettingsProvider settings) {
-    final fonts = ['Cairo', 'Amiri', 'Lateef', 'Roboto', 'Open Sans', 'Lato'];
-    showDialog(
+    ArabicFontCatalog.showPicker(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('اختر الخط العالمي'),
-        content: SizedBox(
-          width: double.maxFinite,
-          child: ListView.builder(
-            shrinkWrap: true,
-            itemCount: fonts.length,
-            itemBuilder: (c, i) => ListTile(
-              title: Text(fonts[i], style: GoogleFonts.getFont(fonts[i])),
-              onTap: () { settings.setGlobalFont(fonts[i]); Navigator.pop(ctx); },
-            ),
-          ),
-        ),
-      ),
+      selectedFontId: settings.globalFont,
+      onSelected: settings.setGlobalFont,
     );
   }
 }

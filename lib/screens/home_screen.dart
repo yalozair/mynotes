@@ -138,6 +138,26 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     SystemNavigator.pop();
   }
 
+  Future<void> _refreshNotes() async {
+    if (!mounted) return;
+    final noteProvider = Provider.of<NoteProvider>(context, listen: false);
+    final settings = Provider.of<SettingsProvider>(context, listen: false);
+    await noteProvider.fetchNotes();
+    await noteProvider.purgeExpiredTrash(settings.trashInterval);
+    await noteProvider.syncAll();
+    if (!mounted) return;
+    if (noteProvider.lastError != null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(noteProvider.lastError!)),
+      );
+    }
+  }
+
+  double _footerBottomInset(BuildContext context) {
+    final isLandscape = MediaQuery.of(context).orientation == Orientation.landscape;
+    return isLandscape ? 56 : 72;
+  }
+
   Future<void> _loadNotesAndSync() async {
     if (!mounted) return;
     await PermissionHelper.ensureAllGranted(context);
@@ -521,7 +541,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               style: const TextStyle(color: Colors.white),
               onChanged: (val) => setState(() => _searchQuery = val),
             )
-          : const Text('ملاحظاتي الذكية', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+          : const Text('مفكرتي', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
         bottom: noteProvider.isSyncing 
           ? const PreferredSize(
               preferredSize: Size.fromHeight(2),
@@ -569,13 +589,17 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           ),
         ],
       ),
-      body: Column(
+      body: Stack(
+        children: [
+          Column(
         children: [
           _buildSyncBanner(noteProvider),
           _buildCategoryFilter(noteProvider),
           if (noteProvider.allTags.isNotEmpty) _buildTagFilter(noteProvider),
           Expanded(
-            child: LayoutBuilder(
+            child: RefreshIndicator(
+              onRefresh: _refreshNotes,
+              child: LayoutBuilder(
               builder: (context, constraints) {
                 // Calculate responsive values
                 int cols = settings.gridColumns;
@@ -603,20 +627,33 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     }
 
                     if (filteredNotes.isEmpty) {
-                      return Center(
+                      return ListView(
+                        physics: const AlwaysScrollableScrollPhysics(),
+                        children: [
+                          SizedBox(
+                            height: constraints.maxHeight * 0.65,
+                            child: Center(
                         child: Column(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
                             const Icon(Icons.edit_note, size: 100, color: Colors.grey),
                             const SizedBox(height: 16),
                             Text(_searchQuery.isEmpty ? 'لا توجد ملاحظات حالياً' : 'لم يتم العثور على نتائج', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                            if (_searchQuery.isEmpty) ...[
+                              const SizedBox(height: 8),
+                              Text('اسحب للأسفل للمزامنة', style: TextStyle(color: Colors.grey.shade600, fontSize: 13)),
+                            ],
                           ],
                         ),
+                            ),
+                          ),
+                        ],
                       );
                     }
 
                     if (settings.viewMode == 'list') {
                       return ListView.builder(
+                        physics: const AlwaysScrollableScrollPhysics(),
                         padding: const EdgeInsets.all(8),
                         itemCount: filteredNotes.length,
                         itemBuilder: (ctx, i) {
@@ -731,6 +768,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     }
 
                     return GridView.builder(
+                      physics: const AlwaysScrollableScrollPhysics(),
                       padding: const EdgeInsets.all(8),
                       gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
                         crossAxisCount: settings.gridColumns,
@@ -828,16 +866,24 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               },
             ),
           ),
+        ),
           _buildFooter(),
         ],
       ),
-      floatingActionButton: GestureDetector(
-        onLongPress: _showTemplatePicker,
-        child: FloatingActionButton(
-          onPressed: () => _openEditor(),
-          tooltip: 'مذكرة جديدة (اضغط مطولاً للقوالب)',
-          child: const Icon(Icons.add),
-        ),
+          Positioned.directional(
+            textDirection: Directionality.of(context),
+            end: 16,
+            bottom: _footerBottomInset(context),
+            child: GestureDetector(
+              onLongPress: _showTemplatePicker,
+              child: FloatingActionButton(
+                onPressed: () => _openEditor(),
+                tooltip: 'مذكرة جديدة (اضغط مطولاً للقوالب)',
+                child: const Icon(Icons.add),
+              ),
+            ),
+          ),
+        ],
       ),
     ),
     );
@@ -944,45 +990,79 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     final isLandscape = MediaQuery.of(context).orientation == Orientation.landscape;
     return SafeArea(
       top: false,
-      child: InkWell(
-      onTap: _showProfileDialog,
-      child: Container(
-        padding: EdgeInsets.symmetric(vertical: isLandscape ? 8 : 16, horizontal: 16),
-        width: double.infinity,
-        decoration: BoxDecoration(
-          color: const Color(0xFF0F1112),
-          borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.4),
-              blurRadius: 10,
-              offset: const Offset(0, -4),
-            )
-          ],
-        ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            const Icon(Icons.account_circle_outlined, color: Color(0xFF26C6DA), size: 20),
-            const SizedBox(width: 8),
-            Flexible(
-              child: Text(
-                'تصميم وتطوير المهندس يوسف العزير',
-                textAlign: TextAlign.center,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  fontWeight: FontWeight.bold,
-                  fontSize: isLandscape ? 13 : 15,
-                  color: const Color(0xFF26C6DA),
-                  fontFamily: 'Cairo',
-                ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: _showProfileDialog,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+          child: Container(
+            padding: EdgeInsets.symmetric(vertical: isLandscape ? 10 : 14, horizontal: 16),
+            width: double.infinity,
+            decoration: BoxDecoration(
+              gradient: const LinearGradient(
+                colors: [Color(0xFF14181C), Color(0xFF0F1112)],
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
               ),
+              borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+              border: Border(
+                top: BorderSide(color: const Color(0xFF26C6DA).withValues(alpha: 0.35)),
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.35),
+                  blurRadius: 12,
+                  offset: const Offset(0, -3),
+                ),
+              ],
             ),
-          ],
+            child: Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF26C6DA).withValues(alpha: 0.15),
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  child: const Icon(Icons.menu_book_rounded, color: Color(0xFF26C6DA), size: 22),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        'مفكرتي',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: isLandscape ? 14 : 16,
+                          color: const Color(0xFF26C6DA),
+                          fontFamily: 'Cairo',
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        'تصميم وتطوير المهندس يوسف العزير',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: isLandscape ? 11 : 12,
+                          color: Colors.white60,
+                          fontFamily: 'Cairo',
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Icon(Icons.chevron_left, color: Colors.white.withValues(alpha: 0.35), size: 22),
+              ],
+            ),
+          ),
         ),
       ),
-    ),
     );
   }
 }

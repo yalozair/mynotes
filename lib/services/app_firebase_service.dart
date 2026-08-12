@@ -33,7 +33,7 @@ class AppFirebaseService {
 
   static void _setupForegroundMessages() {
     FirebaseMessaging.onMessage.listen((RemoteMessage message) {
-      final title = message.notification?.title ?? 'ملاحظاتي الذكية';
+      final title = message.notification?.title ?? 'مفكرتي';
       final body = message.notification?.body ?? '';
       if (body.isNotEmpty) {
         StickyNoteHelper.showStickyNotification(

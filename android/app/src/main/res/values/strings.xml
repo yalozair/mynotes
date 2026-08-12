@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">ملاحظاتي الذكية</string>
+    <string name="app_name">مفكرتي</string>
     <string name="Pading_app">5dp</string>
     <string name="btnRadius">10dp</string>
     <string name="txtwordhint">ابدأ الكتابة هنا...</string>
