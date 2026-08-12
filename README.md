@@ -1,17 +1,21 @@
-# my_nots_flutter
+# ملاحظاتي الذكية
 
-A new Flutter project.
+تطبيق مذكرات عربي — **v1.0.1**
 
-## Getting Started
+## الميزات
 
-This project is a starting point for a Flutter application.
+- مذكرات غنية مع محرر Quill
+- مزامنة Firebase مع تشفير المحتوى والوسوم
+- قوالب، تذكيرات، نسخ احتياطي، ويدجت
+- إعلانات App Open و Exit فقط (بدون بانر)
 
-A few resources to get you started if this is your first Flutter project:
+## التطوير
 
-- [Learn Flutter](https://docs.flutter.dev/get-started/learn-flutter)
-- [Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Flutter learning resources](https://docs.flutter.dev/reference/learning-resources)
+```bash
+flutter pub get
+flutter run
+```
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+## الإصدار
+
+- **1.0.1** — إصلاح overflow، إزالة البانر، تشفير الوسوم، إعلان الإغلاق، صلاحية المذكرة العائمة
