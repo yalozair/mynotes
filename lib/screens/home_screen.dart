@@ -20,6 +20,9 @@ import '../helpers/native_helper.dart';
 import '../helpers/analytics_helper.dart';
 import '../helpers/sticky_note_helper.dart';
 import '../helpers/tag_helper.dart';
+import '../helpers/folder_helper.dart';
+import '../helpers/folder_export_helper.dart';
+import '../helpers/share_link_helper.dart';
 import 'dart:io';
 import 'package:flutter/services.dart';
 
@@ -37,9 +40,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   String _searchQuery = '';
   String _selectedCategory = 'الكل';
   String _selectedTag = '';
+  String _selectedFolder = 'الكل';
+  List<FolderMeta> _folderMetas = [];
   final TextEditingController _searchController = TextEditingController();
   bool _isMiniMode = false;
   String _lockHint = '';
+
+  bool get _isDenseDesktop => Platform.isWindows || Platform.isLinux || Platform.isMacOS;
 
   @override
   void initState() {
@@ -47,13 +54,20 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this);
     _loadLockHint();
     _checkAuth();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
       if (mounted) {
         UpdateHelper.checkForUpdate(context);
         _handleLaunchAction();
         if (Platform.isAndroid) StickyNoteHelper.showQuickNoteShortcut();
       }
+      final metas = await FolderHelper.loadAll();
+      if (mounted) setState(() => _folderMetas = metas);
     });
+  }
+
+  Future<void> _loadFolders() async {
+    final metas = await FolderHelper.loadAll();
+    if (mounted) setState(() => _folderMetas = metas);
   }
 
   Future<void> _handleLaunchAction() async {
@@ -368,6 +382,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     );
     if (mounted) {
       await Provider.of<NoteProvider>(context, listen: false).fetchNotes();
+      await _loadFolders();
     }
   }
 
@@ -445,24 +460,192 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       Offset.zero & overlay.size,
     );
 
+    final showExportFolder = _selectedFolder != 'الكل';
+
     final result = await showMenu<String>(
       context: context,
       position: position,
       items: [
         const PopupMenuItem(value: 'edit', child: Row(children: [Icon(Icons.edit, size: 18), SizedBox(width: 8), Text('تعديل')])),
+        PopupMenuItem(
+          value: 'pin',
+          child: Row(children: [
+            Icon(note.isPinned ? Icons.push_pin_outlined : Icons.push_pin, size: 18),
+            const SizedBox(width: 8),
+            Text(note.isPinned ? 'إلغاء التثبيت' : 'تثبيت'),
+          ]),
+        ),
+        if (showExportFolder)
+          const PopupMenuItem(value: 'export_folder', child: Row(children: [Icon(Icons.folder_zip_outlined, size: 18), SizedBox(width: 8), Text('تصدير مجلد')])),
+        const PopupMenuItem(value: 'share_link', child: Row(children: [Icon(Icons.link, size: 18), SizedBox(width: 8), Text('مشاركة رابط')])),
         const PopupMenuItem(value: 'delete', child: Row(children: [Icon(Icons.delete, size: 18, color: Colors.red), SizedBox(width: 8), Text('حذف', style: TextStyle(color: Colors.red))])),
       ],
     );
 
     if (!mounted) return;
 
-    if (result == 'edit') {
-      if (!mounted) return;
-      _openEditor(note);
-    } else if (result == 'delete') {
-      if (!mounted) return;
-      _confirmDelete(context, note.id!);
+    switch (result) {
+      case 'edit':
+        _openEditor(note);
+        break;
+      case 'pin':
+        Provider.of<NoteProvider>(context, listen: false).togglePin(note);
+        break;
+      case 'export_folder':
+        _showFolderExportSheet(note.folder);
+        break;
+      case 'share_link':
+        _shareNoteLink(note);
+        break;
+      case 'delete':
+        _confirmDelete(context, note.id!);
+        break;
     }
+  }
+
+  Future<void> _shareNoteLink(Note note) async {
+    try {
+      final link = await ShareLinkHelper.createProtectedLink(note);
+      if (!mounted) return;
+      if (link == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('تعذر إنشاء رابط المشاركة')),
+        );
+      }
+    } on StateError catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('تعذر إنشاء رابط المشاركة')),
+      );
+    }
+  }
+
+  void _showFolderExportSheet(String folder) {
+    showModalBottomSheet(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Text('تصدير مجلد "$folder"', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+            ),
+            ListTile(
+              leading: const Icon(Icons.folder_zip_outlined),
+              title: const Text('تصدير كملف ZIP'),
+              onTap: () async {
+                Navigator.pop(ctx);
+                final provider = Provider.of<NoteProvider>(context, listen: false);
+                final path = await FolderExportHelper.exportFolderAsZip(folder, provider.notes);
+                if (!mounted) return;
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text(path != null ? 'تم تصدير المجلد' : 'لا توجد ملاحظات لتصديرها')),
+                );
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.picture_as_pdf_outlined),
+              title: const Text('تصدير كملف PDF'),
+              onTap: () async {
+                Navigator.pop(ctx);
+                final provider = Provider.of<NoteProvider>(context, listen: false);
+                final result = await FolderExportHelper.exportFolderAsPdf(folder, provider.notes);
+                if (!mounted) return;
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text(result != null ? 'تم تصدير المجلد' : 'لا توجد ملاحظات لتصديرها')),
+                );
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _showFolderEditorDialog({FolderMeta? existing}) async {
+    final nameController = TextEditingController(text: existing?.name ?? '');
+    int color = existing?.color ?? FolderMeta.palette.first;
+    String icon = existing?.icon ?? FolderMeta.icons.first;
+
+    final saved = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setStateDialog) => AlertDialog(
+          title: Text(existing == null ? 'مجلد جديد' : 'تعديل المجلد'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (existing == null)
+                  TextField(
+                    controller: nameController,
+                    autofocus: true,
+                    decoration: const InputDecoration(labelText: 'اسم المجلد'),
+                  ),
+                const SizedBox(height: 16),
+                const Text('اللون', style: TextStyle(fontWeight: FontWeight.bold)),
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: FolderMeta.palette.map((c) => GestureDetector(
+                        onTap: () => setStateDialog(() => color = c),
+                        child: CircleAvatar(
+                          backgroundColor: Color(c),
+                          radius: 16,
+                          child: color == c ? const Icon(Icons.check, color: Colors.white, size: 16) : null,
+                        ),
+                      )).toList(),
+                ),
+                const SizedBox(height: 16),
+                const Text('الأيقونة', style: TextStyle(fontWeight: FontWeight.bold)),
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: FolderMeta.icons.map((i) {
+                    final selected = icon == i;
+                    return GestureDetector(
+                      onTap: () => setStateDialog(() => icon = i),
+                      child: CircleAvatar(
+                        backgroundColor: selected ? Color(color) : Colors.grey.withValues(alpha: 0.2),
+                        radius: 18,
+                        child: Icon(
+                          FolderMeta(name: '', icon: i).iconData,
+                          color: selected ? Colors.white : Colors.black54,
+                          size: 18,
+                        ),
+                      ),
+                    );
+                  }).toList(),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('إلغاء')),
+            ElevatedButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('حفظ')),
+          ],
+        ),
+      ),
+    );
+
+    if (saved != true) return;
+    final name = existing?.name ?? nameController.text.trim();
+    if (name.isEmpty) return;
+
+    final meta = FolderMeta(name: name, color: color, icon: icon);
+    await FolderHelper.upsert(meta);
+    if (existing == null && mounted) {
+      await Provider.of<NoteProvider>(context, listen: false).addFolderName(name);
+    }
+    await _loadFolders();
+    if (mounted && existing == null) setState(() => _selectedFolder = name);
   }
 
   @override
@@ -549,6 +732,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             ) 
           : null,
         actions: [
+          if (_selectedFolder != 'الكل')
+            IconButton(
+              icon: const Icon(Icons.ios_share, color: Colors.white),
+              onPressed: () => _showFolderExportSheet(_selectedFolder),
+              tooltip: 'تصدير المجلد',
+            ),
           IconButton(
             icon: const Icon(Icons.insights, color: Colors.white),
             onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (ctx) => const StatsDashboardScreen())),
@@ -592,18 +781,68 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       body: Stack(
         children: [
           Column(
-        children: [
-          _buildSyncBanner(noteProvider),
-          _buildCategoryFilter(noteProvider),
-          if (noteProvider.allTags.isNotEmpty) _buildTagFilter(noteProvider),
-          Expanded(
-            child: RefreshIndicator(
-              onRefresh: _refreshNotes,
-              child: LayoutBuilder(
-              builder: (context, constraints) {
+            children: [
+              Expanded(
+                child: _isWideLayout(context)
+                    ? Row(
+                        children: [
+                          _buildFolderRail(),
+                          const VerticalDivider(width: 1),
+                          Expanded(
+                            child: Column(
+                              children: [
+                                _buildSyncBanner(noteProvider),
+                                _buildCategoryFilter(noteProvider),
+                                if (noteProvider.allTags.isNotEmpty) _buildTagFilter(noteProvider),
+                                Expanded(child: _buildNotesArea(noteProvider, settings)),
+                              ],
+                            ),
+                          ),
+                        ],
+                      )
+                    : Column(
+                        children: [
+                          _buildSyncBanner(noteProvider),
+                          _buildCategoryFilter(noteProvider),
+                          _buildFolderFilter(),
+                          if (noteProvider.allTags.isNotEmpty) _buildTagFilter(noteProvider),
+                          Expanded(child: _buildNotesArea(noteProvider, settings)),
+                        ],
+                      ),
+              ),
+              _buildFooter(),
+            ],
+          ),
+          Positioned.directional(
+            textDirection: Directionality.of(context),
+            end: 16,
+            bottom: _footerBottomInset(context),
+            child: GestureDetector(
+              onLongPress: _showTemplatePicker,
+              child: FloatingActionButton(
+                onPressed: () => _openEditor(),
+                tooltip: 'مذكرة جديدة (اضغط مطولاً للقوالب)',
+                child: const Icon(Icons.add),
+              ),
+            ),
+          ),
+        ],
+      ),
+    ),
+    );
+  }
+
+  bool _isWideLayout(BuildContext context) => MediaQuery.sizeOf(context).width >= 900;
+
+  Widget _buildNotesArea(NoteProvider noteProvider, SettingsProvider settings) {
+    return RefreshIndicator(
+      onRefresh: _refreshNotes,
+      child: LayoutBuilder(
+        builder: (context, constraints) {
                 // Calculate responsive values
+                final dense = _isDenseDesktop;
                 int cols = settings.gridColumns;
-                double spacing = 10.0;
+                double spacing = dense ? 8.0 : 10.0;
                 double totalSpacing = (cols - 1) * spacing + 16.0; // 16 is padding
                 double itemWidth = (constraints.maxWidth - totalSpacing) / cols;
                 
@@ -618,6 +857,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                   query: _searchQuery,
                   category: _selectedCategory,
                   tag: _selectedTag,
+                  folder: _selectedFolder,
                 );
 
                 return Builder(
@@ -655,18 +895,31 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                       return ListView.builder(
                         physics: const AlwaysScrollableScrollPhysics(),
                         padding: const EdgeInsets.all(8),
+                        cacheExtent: 500,
                         itemCount: filteredNotes.length,
                         itemBuilder: (ctx, i) {
                           final note = filteredNotes[i];
-                          return GestureDetector(
+                          return RepaintBoundary(
+                            child: GestureDetector(
                             onSecondaryTapDown: (details) => _showContextMenu(context, details.globalPosition, note),
+                            onLongPressStart: (details) => _showContextMenu(context, details.globalPosition, note),
                             child: Card(
                               margin: const EdgeInsets.only(bottom: 8),
                               color: note.cardColor != 0 ? Color(note.cardColor) : Theme.of(context).cardColor,
                               child: ListTile(
                                 isThreeLine: TagHelper.parseTags(note.tags).isNotEmpty,
                                 onTap: () => _openEditor(note),
-                                title: Text(note.title, style: TextStyle(fontWeight: FontWeight.bold, color: _isColorDark(note.cardColor) ? Colors.white : Colors.black87)),
+                                title: Row(
+                                  children: [
+                                    if (note.isPinned) Padding(
+                                      padding: const EdgeInsets.only(left: 6),
+                                      child: Icon(Icons.push_pin, size: 14, color: _isColorDark(note.cardColor) ? Colors.white70 : Colors.black54),
+                                    ),
+                                    Expanded(
+                                      child: Text(note.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontWeight: FontWeight.bold, color: _isColorDark(note.cardColor) ? Colors.white : Colors.black87)),
+                                    ),
+                                  ],
+                                ),
                                 subtitle: Column(
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
@@ -710,6 +963,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                                 ),
                               ),
                             ),
+                          ),
                           );
                         },
                       );
@@ -770,6 +1024,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     return GridView.builder(
                       physics: const AlwaysScrollableScrollPhysics(),
                       padding: const EdgeInsets.all(8),
+                      cacheExtent: 500,
                       gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
                         crossAxisCount: settings.gridColumns,
                         childAspectRatio: dynamicAspectRatio,
@@ -782,8 +1037,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                         final cardColor = note.cardColor != 0 ? Color(note.cardColor) : Theme.of(context).cardColor;
                         final isDark = _isColorDark(note.cardColor);
                         
-                        return GestureDetector(
+                        return RepaintBoundary(
+                          child: GestureDetector(
                           onSecondaryTapDown: (details) => _showContextMenu(context, details.globalPosition, note),
+                          onLongPressStart: (details) => _showContextMenu(context, details.globalPosition, note),
                           onTap: () => _openEditor(note),
                           child: Card(
                             color: cardColor,
@@ -796,6 +1053,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                                 children: [
                                   Row(
                                     children: [
+                                      if (note.isPinned)
+                                        Padding(
+                                          padding: const EdgeInsets.only(left: 4),
+                                          child: Icon(Icons.push_pin, size: 14, color: isDark ? Colors.white70 : Colors.black54),
+                                        ),
                                       Expanded(
                                         child: Text(
                                           note.title,
@@ -858,34 +1120,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                               ),
                             ),
                           ),
+                          ),
                         );
                       },
                     );
                   },
                 );
-              },
-            ),
-          ),
-        ),
-          _buildFooter(),
-        ],
+        },
       ),
-          Positioned.directional(
-            textDirection: Directionality.of(context),
-            end: 16,
-            bottom: _footerBottomInset(context),
-            child: GestureDetector(
-              onLongPress: _showTemplatePicker,
-              child: FloatingActionButton(
-                onPressed: () => _openEditor(),
-                tooltip: 'مذكرة جديدة (اضغط مطولاً للقوالب)',
-                child: const Icon(Icons.add),
-              ),
-            ),
-          ),
-        ],
-      ),
-    ),
     );
   }
 
@@ -982,6 +1224,101 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             onSelected: (selected) => setState(() => _selectedCategory = cat),
           ),
         )).toList(),
+      ),
+    );
+  }
+
+  Widget _folderChipAvatar(FolderMeta meta) => Icon(meta.iconData, size: 16, color: Color(meta.color));
+
+  Widget _buildFolderFilter() {
+    return Container(
+      height: 50,
+      padding: const EdgeInsets.symmetric(horizontal: 8),
+      child: ListView(
+        scrollDirection: Axis.horizontal,
+        cacheExtent: 500,
+        children: [
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 4.0),
+            child: ChoiceChip(
+              avatar: const Icon(Icons.apps, size: 16),
+              label: const Text('كل المجلدات'),
+              selected: _selectedFolder == 'الكل',
+              onSelected: (_) => setState(() => _selectedFolder = 'الكل'),
+            ),
+          ),
+          ..._folderMetas.map((meta) => Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 4.0),
+                child: GestureDetector(
+                  onLongPress: () => _showFolderEditorDialog(existing: meta),
+                  child: ChoiceChip(
+                    avatar: _folderChipAvatar(meta),
+                    label: Text(meta.name),
+                    selected: _selectedFolder == meta.name,
+                    selectedColor: Color(meta.color).withValues(alpha: 0.25),
+                    onSelected: (_) => setState(() => _selectedFolder = meta.name),
+                  ),
+                ),
+              )),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 4.0),
+            child: ActionChip(
+              avatar: const Icon(Icons.add, size: 16),
+              label: const Text('مجلد جديد'),
+              onPressed: () => _showFolderEditorDialog(),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildFolderRail() {
+    final dense = _isDenseDesktop;
+    return Container(
+      width: 220,
+      color: Theme.of(context).cardColor,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Padding(
+            padding: EdgeInsets.symmetric(vertical: dense ? 8 : 12, horizontal: 12),
+            child: Text(
+              'المجلدات',
+              style: TextStyle(fontWeight: FontWeight.bold, color: Theme.of(context).primaryColor),
+            ),
+          ),
+          const Divider(height: 1),
+          Expanded(
+            child: ListView(
+              cacheExtent: 500,
+              padding: EdgeInsets.symmetric(vertical: dense ? 2 : 4),
+              children: [
+                ListTile(
+                  dense: dense,
+                  leading: const Icon(Icons.apps),
+                  title: const Text('كل المجلدات'),
+                  selected: _selectedFolder == 'الكل',
+                  onTap: () => setState(() => _selectedFolder = 'الكل'),
+                ),
+                ..._folderMetas.map((meta) => ListTile(
+                      dense: dense,
+                      leading: Icon(meta.iconData, color: Color(meta.color)),
+                      title: Text(meta.name, maxLines: 1, overflow: TextOverflow.ellipsis),
+                      selected: _selectedFolder == meta.name,
+                      onTap: () => setState(() => _selectedFolder = meta.name),
+                      onLongPress: () => _showFolderEditorDialog(existing: meta),
+                    )),
+                ListTile(
+                  dense: dense,
+                  leading: const Icon(Icons.add),
+                  title: const Text('مجلد جديد'),
+                  onTap: () => _showFolderEditorDialog(),
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }

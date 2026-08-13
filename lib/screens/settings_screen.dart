@@ -1,7 +1,9 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:provider/provider.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:permission_handler/permission_handler.dart' show openAppSettings;
 import '../helpers/auth_helper.dart';
 import '../providers/settings_provider.dart';
 import '../providers/note_provider.dart';
@@ -10,6 +12,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import '../helpers/update_helper.dart';
 import '../helpers/backup_helper.dart';
+import '../helpers/drive_backup_helper.dart';
 import '../helpers/native_helper.dart';
 import '../helpers/sticky_note_helper.dart';
 import '../helpers/analytics_helper.dart';
@@ -27,6 +30,7 @@ class SettingsScreen extends StatefulWidget {
 class _SettingsScreenState extends State<SettingsScreen> {
   bool _isLockEnabled = false;
   bool _quickNoteEnabled = true;
+  bool _isUploadingDrive = false;
   final FirebaseAuth _auth = FirebaseAuth.instance;
 
   @override
@@ -82,6 +86,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
         );
       }
     }
+  }
+
+  Future<void> _uploadToDrive() async {
+    setState(() => _isUploadingDrive = true);
+    final result = await DriveBackupHelper.uploadEncryptedBackup();
+    if (!mounted) return;
+    setState(() => _isUploadingDrive = false);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(result != null ? 'تم رفع النسخة الاحتياطية بنجاح' : 'تعذر رفع النسخة الاحتياطية')),
+    );
   }
 
   void _signOut() async {
@@ -164,6 +178,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
             value: _isLockEnabled,
             onChanged: _toggleLock,
           ),
+          if (Platform.isAndroid)
+            ListTile(
+              leading: const Icon(Icons.privacy_tip_outlined),
+              title: const Text('صلاحيات أندرويد 13/14'),
+              subtitle: const Text('قد يطلب النظام صلاحيات الإشعارات، الصور، الميكروفون، والكاميرا بشكل منفصل — فعّلها من إعدادات التطبيق عند الحاجة'),
+              isThreeLine: true,
+              trailing: TextButton(
+                onPressed: () => openAppSettings(),
+                child: const Text('فتح الإعدادات'),
+              ),
+            ),
           
           _sectionTitle('المحرر والتخطيط'),
           ListTile(
@@ -199,6 +224,24 @@ class _SettingsScreenState extends State<SettingsScreen> {
               label: settings.gridRows.toString(),
               onChanged: (val) => settings.setGridRows(val.toInt()),
             ),
+          ),
+          SwitchListTile(
+            title: const Text('ملمس الورق'),
+            subtitle: const Text('إظهار خلفية بملمس الورق في المحرر'),
+            value: settings.paperTexture,
+            onChanged: (val) => settings.setPaperTexture(val),
+          ),
+          SwitchListTile(
+            title: const Text('ثقوب الورق'),
+            subtitle: const Text('إظهار ثقوب دفتر الملاحظات على الحافة'),
+            value: settings.paperHoles,
+            onChanged: (val) => settings.setPaperHoles(val),
+          ),
+          SwitchListTile(
+            title: const Text('الإملاء الصوتي المستمر'),
+            subtitle: const Text('الاستمرار في الاستماع دون توقف بعد كل جملة'),
+            value: settings.continuousSpeech,
+            onChanged: (val) => settings.setContinuousSpeech(val),
           ),
           _sectionTitle('النسخ الاحتياطي والاختصارات'),
           ListTile(
@@ -239,6 +282,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 }
               }
             },
+          ),
+          SwitchListTile(
+            title: const Text('نسخ احتياطي أسبوعي تلقائي إلى Drive'),
+            subtitle: const Text('رفع نسخة مشفّرة تلقائياً إلى Google Drive كل أسبوع'),
+            value: settings.driveAutoBackup,
+            onChanged: (val) => settings.setDriveAutoBackup(val),
+          ),
+          ListTile(
+            leading: const Icon(Icons.cloud_upload_outlined),
+            title: const Text('رفع إلى Google Drive الآن'),
+            trailing: _isUploadingDrive
+                ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))
+                : null,
+            onTap: _isUploadingDrive ? null : _uploadToDrive,
           ),
           ListTile(
             leading: const Icon(Icons.bubble_chart),
