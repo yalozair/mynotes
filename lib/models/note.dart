@@ -22,6 +22,11 @@ class Note {
   bool isEncrypted;
   String? userId;
   bool isSynced;
+  bool isPinned;
+  String folder;
+  int folderColor;
+  String folderIcon;
+  String? pinHash;
 
   Note({
     this.id,
@@ -47,6 +52,11 @@ class Note {
     this.isEncrypted = false,
     this.userId,
     this.isSynced = false,
+    this.isPinned = false,
+    this.folder = 'الافتراضي',
+    this.folderColor = 0xFF26C6DA,
+    this.folderIcon = 'folder',
+    this.pinHash,
   });
 
   Map<String, dynamic> toMap() {
@@ -74,6 +84,11 @@ class Note {
       'isEncrypted': isEncrypted ? 1 : 0,
       'userId': userId,
       'isSynced': isSynced ? 1 : 0,
+      'isPinned': isPinned ? 1 : 0,
+      'folder': folder,
+      'folderColor': folderColor,
+      'folderIcon': folderIcon,
+      'pinHash': pinHash,
     };
   }
 
@@ -102,6 +117,11 @@ class Note {
       isEncrypted: _toBool(map['isEncrypted']),
       userId: map['userId']?.toString(),
       isSynced: _toBool(map['isSynced']),
+      isPinned: _toBool(map['isPinned']),
+      folder: map['folder']?.toString() ?? 'الافتراضي',
+      folderColor: _toInt(map['folderColor'], 0xFF26C6DA),
+      folderIcon: map['folderIcon']?.toString() ?? 'folder',
+      pinHash: map['pinHash']?.toString(),
     );
   }
 

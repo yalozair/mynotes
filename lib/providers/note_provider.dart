@@ -10,6 +10,10 @@ import '../helpers/encryption_helper.dart';
 import '../helpers/tag_helper.dart';
 import '../helpers/reminder_helper.dart';
 import '../helpers/analytics_helper.dart';
+import '../helpers/writing_streak_helper.dart';
+import '../models/note_revision.dart';
+import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 enum SyncStatus { saved, syncing, pending, offline, error }
 
@@ -77,10 +81,16 @@ class NoteProvider with ChangeNotifier {
     return EncryptionHelper.plainHtml(note.contentHtml);
   }
 
-  List<Note> notesFor({String query = '', String category = 'الكل', String tag = ''}) {
+  List<Note> notesFor({
+    String query = '',
+    String category = 'الكل',
+    String tag = '',
+    String folder = 'الكل',
+    bool pinnedOnly = false,
+  }) {
     final q = query.trim().toLowerCase();
     final tagQ = tag.trim().toLowerCase();
-    return _notes.where((n) {
+    final list = _notes.where((n) {
       final preview = _plainContentFor(n);
       final tagList = TagHelper.parseTags(n.tags).map((t) => t.toLowerCase()).toList();
       final matchesQuery = q.isEmpty ||
@@ -89,8 +99,37 @@ class NoteProvider with ChangeNotifier {
           n.tags.toLowerCase().contains(q);
       final matchesTag = tagQ.isEmpty || tagList.contains(tagQ);
       final matchesCat = category == 'الكل' || n.category == category;
-      return matchesQuery && matchesCat && matchesTag;
+      final matchesFolder = folder == 'الكل' || n.folder == folder;
+      final matchesPinned = !pinnedOnly || n.isPinned;
+      return matchesQuery && matchesCat && matchesTag && matchesFolder && matchesPinned;
     }).toList();
+    list.sort((a, b) {
+      if (a.isPinned != b.isPinned) return a.isPinned ? -1 : 1;
+      return b.timestamp.compareTo(a.timestamp);
+    });
+    return list;
+  }
+
+  Future<List<String>> allFolders() async {
+    final prefs = await SharedPreferences.getInstance();
+    final custom = prefs.getStringList('custom_folders') ?? [];
+    final folders = <String>{'الافتراضي', ...custom};
+    for (final n in _notes) {
+      if (n.folder.isNotEmpty) folders.add(n.folder);
+    }
+    return folders.toList()..sort();
+  }
+
+  Future<void> addFolderName(String name) async {
+    final trimmed = name.trim();
+    if (trimmed.isEmpty) return;
+    final prefs = await SharedPreferences.getInstance();
+    final custom = prefs.getStringList('custom_folders') ?? [];
+    if (!custom.contains(trimmed)) {
+      custom.add(trimmed);
+      await prefs.setStringList('custom_folders', custom);
+    }
+    notifyListeners();
   }
 
   List<String> get allTags {
@@ -149,12 +188,26 @@ class NoteProvider with ChangeNotifier {
     return note;
   }
 
-  Future<void> updateNote(Note note, {bool autoTag = true}) async {
+  Future<void> updateNote(Note note, {bool autoTag = true, bool saveRevision = true}) async {
     if (autoTag && !note.isEncrypted) {
       final plain = note.content == '••••••••' ? _plainContentFor(note) : note.content;
       note.tags = TagHelper.generateTags(note.title, plain);
     }
     if (_user != null) note.userId = _user!.uid;
+
+    if (saveRevision && note.id != null) {
+      final existing = await _dbHelper.getNoteById(note.id!);
+      if (existing != null) {
+        await _dbHelper.saveRevision(NoteRevision(
+          noteId: note.id!,
+          title: existing.title,
+          content: existing.content,
+          contentHtml: existing.contentHtml,
+          savedAt: DateTime.now().millisecondsSinceEpoch,
+        ));
+      }
+    }
+
     await _dbHelper.updateNote(note);
 
     if (note.id != null) {
@@ -165,18 +218,56 @@ class NoteProvider with ChangeNotifier {
       }
     }
     AnalyticsHelper.noteSaved();
+    await WritingStreakHelper.markToday();
 
     if (_isFirebaseReady && _user != null) {
-      try {
-        await _syncToFirestore(note);
-      } catch (e) {
-        debugPrint('Sync after update failed: $e');
-        lastError = 'تم الحفظ محلياً لكن فشلت المزامنة';
+      final online = await _hasNetwork();
+      if (!online) {
+        note.isSynced = false;
+        await _dbHelper.updateNote(note);
+        lastError = 'لا يوجد اتصال — الحفظ محلي وسيُزامن لاحقاً';
+      } else {
+        try {
+          await _syncToFirestore(note);
+        } catch (e) {
+          debugPrint('Sync after update failed: $e');
+          note.isSynced = false;
+          await _dbHelper.updateNote(note);
+          lastError = 'تم الحفظ محلياً لكن فشلت المزامنة';
+        }
       }
     }
 
     await fetchNotes();
     NativeHelper.updateWidget();
+  }
+
+  Future<bool> _hasNetwork() async {
+    try {
+      final result = await Connectivity().checkConnectivity();
+      if (result is List) {
+        return result.any((e) => e != ConnectivityResult.none);
+      }
+      return result != ConnectivityResult.none;
+    } catch (_) {
+      return true;
+    }
+  }
+
+  Future<void> togglePin(Note note) async {
+    note.isPinned = !note.isPinned;
+    note.isSynced = false;
+    await updateNote(note, autoTag: false, saveRevision: false);
+  }
+
+  Future<List<NoteRevision>> revisionsFor(int noteId) => _dbHelper.getRevisions(noteId);
+
+  Future<void> restoreRevision(Note note, NoteRevision revision) async {
+    note.title = revision.title;
+    note.content = revision.content;
+    note.contentHtml = revision.contentHtml;
+    note.isSynced = false;
+    await updateNote(note, autoTag: false, saveRevision: true);
   }
 
   Future<void> deleteNote(int id) async {
@@ -226,6 +317,7 @@ class NoteProvider with ChangeNotifier {
       if (note.tags.isNotEmpty) {
         encryptedMap['tags'] = EncryptionHelper.encryptText(note.tags, forCloud: true);
       }
+      encryptedMap.remove('pinHash');
 
       await docRef.set(encryptedMap);
       note.isSynced = true;
@@ -341,6 +433,13 @@ class NoteProvider with ChangeNotifier {
   Future<void> syncAll() async {
     if (!_isFirebaseReady || _user == null) return;
     bindUser(_user!.uid);
+
+    if (!await _hasNetwork()) {
+      lastError = 'لا يوجد اتصال بالإنترنت — أعد المحاولة لاحقاً';
+      notifyListeners();
+      return;
+    }
+
     _isSyncing = true;
     lastError = null;
     notifyListeners();
@@ -352,10 +451,16 @@ class NoteProvider with ChangeNotifier {
           note.userId = _user!.uid;
           await _dbHelper.updateNote(note);
         }
-        await _syncToFirestore(note, notify: false);
+        final ok = await _syncToFirestore(note, notify: false);
+        if (!ok && !await _hasNetwork()) {
+          lastError = 'انقطع الاتصال أثناء المزامنة — سيُستأنف لاحقاً';
+          break;
+        }
       }
-      await syncFromCloud();
-      await ReminderHelper.rescheduleAll(_notes);
+      if (await _hasNetwork()) {
+        await syncFromCloud();
+        await ReminderHelper.rescheduleAll(_notes);
+      }
     } catch (e) {
       debugPrint('Full Sync Error: $e');
       lastError = 'فشلت المزامنة الكاملة';

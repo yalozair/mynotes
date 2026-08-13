@@ -35,9 +35,11 @@ class ReminderHelper {
 
     DateTimeComponents? repeat;
     if (note.reminderRepeat == 1) {
-      repeat = DateTimeComponents.time;
+      repeat = DateTimeComponents.time; // daily
     } else if (note.reminderRepeat == 2) {
-      repeat = DateTimeComponents.dayOfWeekAndTime;
+      repeat = DateTimeComponents.dayOfWeekAndTime; // weekly
+    } else if (note.reminderRepeat == 3) {
+      repeat = DateTimeComponents.dayOfMonthAndTime; // monthly
     }
 
     await _plugin.zonedSchedule(

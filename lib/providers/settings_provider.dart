@@ -19,7 +19,11 @@ class SettingsProvider with ChangeNotifier {
   AppTheme _appTheme = AppTheme.blue;
   String _globalFont = 'Cairo';
   bool _isSyncEnabled = false;
-  String _syncProvider = 'Google'; // 'Google' or 'Microsoft'
+  String _syncProvider = 'Google';
+  bool _driveAutoBackup = false;
+  bool _paperTexture = true;
+  bool _paperHoles = true;
+  bool _continuousSpeech = true;
 
   bool get showLines => _showLines;
   bool get showLineNumbers => _showLineNumbers;
@@ -35,6 +39,10 @@ class SettingsProvider with ChangeNotifier {
   String get globalFont => _globalFont;
   bool get isSyncEnabled => _isSyncEnabled;
   String get syncProvider => _syncProvider;
+  bool get driveAutoBackup => _driveAutoBackup;
+  bool get paperTexture => _paperTexture;
+  bool get paperHoles => _paperHoles;
+  bool get continuousSpeech => _continuousSpeech;
 
   SettingsProvider() {
     _loadSettings();
@@ -56,6 +64,10 @@ class SettingsProvider with ChangeNotifier {
     _globalFont = prefs.getString('global_font') ?? 'Cairo';
     _isSyncEnabled = prefs.getBool('sync_enabled') ?? false;
     _syncProvider = prefs.getString('sync_provider') ?? 'Google';
+    _driveAutoBackup = prefs.getBool('drive_auto_backup') ?? false;
+    _paperTexture = prefs.getBool('paper_texture') ?? true;
+    _paperHoles = prefs.getBool('paper_holes') ?? true;
+    _continuousSpeech = prefs.getBool('continuous_speech') ?? true;
     
     notifyListeners();
   }
@@ -92,6 +104,34 @@ class SettingsProvider with ChangeNotifier {
     _syncProvider = provider;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('sync_provider', provider);
+    notifyListeners();
+  }
+
+  Future<void> setDriveAutoBackup(bool value) async {
+    _driveAutoBackup = value;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('drive_auto_backup', value);
+    notifyListeners();
+  }
+
+  Future<void> setPaperTexture(bool value) async {
+    _paperTexture = value;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('paper_texture', value);
+    notifyListeners();
+  }
+
+  Future<void> setPaperHoles(bool value) async {
+    _paperHoles = value;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('paper_holes', value);
+    notifyListeners();
+  }
+
+  Future<void> setContinuousSpeech(bool value) async {
+    _continuousSpeech = value;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('continuous_speech', value);
     notifyListeners();
   }
 

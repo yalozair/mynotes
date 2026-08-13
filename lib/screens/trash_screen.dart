@@ -78,7 +78,25 @@ class _TrashScreenState extends State<TrashScreen> {
                           ),
                           IconButton(
                             icon: const Icon(Icons.delete_forever, color: Colors.red),
-                            onPressed: () => noteProvider.permanentlyDeleteNote(note.id!),
+                            onPressed: () async {
+                              final ok = await showDialog<bool>(
+                                context: context,
+                                builder: (dCtx) => AlertDialog(
+                                  title: const Text('حذف نهائي'),
+                                  content: Text('حذف «${note.title}» نهائياً؟ لا يمكن التراجع.'),
+                                  actions: [
+                                    TextButton(onPressed: () => Navigator.pop(dCtx, false), child: const Text('إلغاء')),
+                                    TextButton(
+                                      onPressed: () => Navigator.pop(dCtx, true),
+                                      child: const Text('حذف', style: TextStyle(color: Colors.red)),
+                                    ),
+                                  ],
+                                ),
+                              );
+                              if (ok == true && context.mounted) {
+                                await noteProvider.permanentlyDeleteNote(note.id!);
+                              }
+                            },
                           ),
                         ],
                       ),
