@@ -67,7 +67,7 @@ void main() async {
   });
   await ReminderHelper.init();
   if (!kIsWeb && (Platform.isAndroid || Platform.isIOS)) {
-    await AdHelper.init();
+    await AdHelper.initWithConsent();
   }
 
   runApp(const MyApp());
@@ -128,7 +128,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      AdHelper.showAppOpenAd();
+      AdHelper.showAppOpenAd(fromResume: false);
       DriveBackupHelper.runWeeklyIfDue().catchError((e) {
         debugPrint('Weekly Drive backup skipped: $e');
         return null;
@@ -146,7 +146,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
-      AdHelper.showAppOpenAd();
+      AdHelper.showAppOpenAd(fromResume: true);
     }
   }
 

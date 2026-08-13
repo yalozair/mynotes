@@ -1,0 +1,7 @@
+# انسخ هذا الملف إلى key.properties في مجلد android/ واملأ القيم.
+# لا ترفع key.properties ولا ملفات .jks/.keystore إلى Git.
+
+storePassword=YOUR_STORE_PASSWORD
+keyPassword=YOUR_KEY_PASSWORD
+keyAlias=upload
+storeFile=../keystore/upload-keystore.jks

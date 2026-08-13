@@ -37,6 +37,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   bool _isAuthenticated = false;
   bool _isLockEnabled = false;
   bool _isSearching = false;
+  bool _filtersExpanded = false;
   String _searchQuery = '';
   String _selectedCategory = 'الكل';
   String _selectedTag = '';
@@ -59,6 +60,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         UpdateHelper.checkForUpdate(context);
         _handleLaunchAction();
         if (Platform.isAndroid) StickyNoteHelper.showQuickNoteShortcut();
+        Provider.of<NoteProvider>(context, listen: false).fetchTrashNotes();
       }
       final metas = await FolderHelper.loadAll();
       if (mounted) setState(() => _folderMetas = metas);
@@ -147,8 +149,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     }
   }
 
-  Future<void> _handleExitApp() async {
-    await AdHelper.showExitAd();
+  Future<void> _handleExitApp({bool showAd = false}) async {
+    if (showAd) {
+      await AdHelper.showExitAd();
+    }
     SystemNavigator.pop();
   }
 
@@ -174,7 +178,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   Future<void> _loadNotesAndSync() async {
     if (!mounted) return;
-    await PermissionHelper.ensureAllGranted(context);
+    await PermissionHelper.ensureNotifications(context);
     if (!mounted) return;
     final noteProvider = Provider.of<NoteProvider>(context, listen: false);
     final settings = Provider.of<SettingsProvider>(context, listen: false);
@@ -477,7 +481,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         ),
         if (showExportFolder)
           const PopupMenuItem(value: 'export_folder', child: Row(children: [Icon(Icons.folder_zip_outlined, size: 18), SizedBox(width: 8), Text('تصدير مجلد')])),
-        const PopupMenuItem(value: 'share_link', child: Row(children: [Icon(Icons.link, size: 18), SizedBox(width: 8), Text('مشاركة رابط')])),
+        const PopupMenuItem(value: 'share_link', child: Row(children: [Icon(Icons.link, size: 18), SizedBox(width: 8), Text('رابط مشاركة مؤقت')])),
         const PopupMenuItem(value: 'delete', child: Row(children: [Icon(Icons.delete, size: 18, color: Colors.red), SizedBox(width: 8), Text('حذف', style: TextStyle(color: Colors.red))])),
       ],
     );
@@ -504,8 +508,23 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   Future<void> _shareNoteLink(Note note) async {
+    final proceed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('رابط مشاركة مؤقت'),
+        content: const Text(
+          'سيُرفع عنوان المذكرة ومحتواها النصّي إلى السحابة لمدة 7 أيام تقريباً.\n\n'
+          'لا تستخدم هذه الميزة للمذكرات الحساسة أو الشخصية جداً. المذكرات المشفّرة مرفوضة.',
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('إلغاء')),
+          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('متابعة')),
+        ],
+      ),
+    );
+    if (proceed != true || !mounted) return;
     try {
-      final link = await ShareLinkHelper.createProtectedLink(note);
+      final link = await ShareLinkHelper.createTemporaryShareLink(note);
       if (!mounted) return;
       if (link == null) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -696,7 +715,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       canPop: false,
       onPopInvokedWithResult: (didPop, result) async {
         if (didPop) return;
-        await _handleExitApp();
+        // الرجوع من الرئيسية يغلق التطبيق بدون إعلان (سياسة AdMob تفضّل عدم إعلان عند كل خروج).
+        await _handleExitApp(showAd: false);
       },
       child: Scaffold(
       appBar: AppBar(
@@ -757,23 +777,44 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           ),
           IconButton(
             icon: const Icon(Icons.desktop_windows, color: Colors.white),
-            onPressed: () => setState(() => _isMiniMode = true),
+            onPressed: () {
+              if (MediaQuery.sizeOf(context).width < 900) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('وضع النافذة الصغيرة مخصص للشاشات العريضة / سطح المكتب')),
+                );
+                return;
+              }
+              setState(() => _isMiniMode = true);
+            },
             tooltip: 'وضع النافذة الصغيرة',
           ),
           PopupMenuButton<String>(
             iconColor: Colors.white,
-            onSelected: (val) {
+            onSelected: (val) async {
               if (val == 'settings') {
                 if (!mounted) return;
                 Navigator.push(context, MaterialPageRoute(builder: (ctx) => const SettingsScreen()));
               } else if (val == 'trash') {
                 if (!mounted) return;
                 Navigator.push(context, MaterialPageRoute(builder: (ctx) => const TrashScreen()));
+              } else if (val == 'templates') {
+                _showTemplatePicker();
+              } else if (val == 'exit') {
+                await _handleExitApp(showAd: true);
               }
             },
             itemBuilder: (ctx) => [
-              const PopupMenuItem(value: 'trash', child: Row(children: [Icon(Icons.delete), SizedBox(width: 8), Text('سلة المحذوفات')])),
+              const PopupMenuItem(value: 'templates', child: Row(children: [Icon(Icons.dashboard_customize_outlined), SizedBox(width: 8), Text('قوالب جاهزة')])),
+              PopupMenuItem(
+                value: 'trash',
+                child: Row(children: [
+                  const Icon(Icons.delete),
+                  const SizedBox(width: 8),
+                  Text('سلة المحذوفات${noteProvider.trashNotes.isEmpty ? '' : ' (${noteProvider.trashNotes.length})'}'),
+                ]),
+              ),
               const PopupMenuItem(value: 'settings', child: Row(children: [Icon(Icons.settings), SizedBox(width: 8), Text('الإعدادات')])),
+              const PopupMenuItem(value: 'exit', child: Row(children: [Icon(Icons.exit_to_app), SizedBox(width: 8), Text('خروج')])),
             ],
           ),
         ],
@@ -792,8 +833,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                             child: Column(
                               children: [
                                 _buildSyncBanner(noteProvider),
-                                _buildCategoryFilter(noteProvider),
-                                if (noteProvider.allTags.isNotEmpty) _buildTagFilter(noteProvider),
+                                _buildFiltersToggle(noteProvider),
+                                if (_filtersExpanded) ...[
+                                  _buildCategoryFilter(noteProvider),
+                                  if (noteProvider.allTags.isNotEmpty) _buildTagFilter(noteProvider),
+                                ],
                                 Expanded(child: _buildNotesArea(noteProvider, settings)),
                               ],
                             ),
@@ -803,9 +847,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     : Column(
                         children: [
                           _buildSyncBanner(noteProvider),
-                          _buildCategoryFilter(noteProvider),
-                          _buildFolderFilter(),
-                          if (noteProvider.allTags.isNotEmpty) _buildTagFilter(noteProvider),
+                          _buildFiltersToggle(noteProvider),
+                          if (_filtersExpanded) ...[
+                            _buildCategoryFilter(noteProvider),
+                            _buildFolderFilter(),
+                            if (noteProvider.allTags.isNotEmpty) _buildTagFilter(noteProvider),
+                          ],
                           Expanded(child: _buildNotesArea(noteProvider, settings)),
                         ],
                       ),
@@ -914,6 +961,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                                     if (note.isPinned) Padding(
                                       padding: const EdgeInsets.only(left: 6),
                                       child: Icon(Icons.push_pin, size: 14, color: _isColorDark(note.cardColor) ? Colors.white70 : Colors.black54),
+                                    ),
+                                    if (!note.isSynced) Padding(
+                                      padding: const EdgeInsets.only(left: 4),
+                                      child: Icon(Icons.cloud_off, size: 14, color: Colors.orange.shade700),
                                     ),
                                     Expanded(
                                       child: Text(note.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontWeight: FontWeight.bold, color: _isColorDark(note.cardColor) ? Colors.white : Colors.black87)),
@@ -1057,6 +1108,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                                         Padding(
                                           padding: const EdgeInsets.only(left: 4),
                                           child: Icon(Icons.push_pin, size: 14, color: isDark ? Colors.white70 : Colors.black54),
+                                        ),
+                                      if (!note.isSynced)
+                                        Padding(
+                                          padding: const EdgeInsets.only(left: 4),
+                                          child: Icon(Icons.cloud_off, size: 14, color: isDark ? Colors.orange.shade200 : Colors.orange.shade800),
                                         ),
                                       Expanded(
                                         child: Text(
@@ -1206,6 +1262,46 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 ),
               )),
         ],
+      ),
+    );
+  }
+
+  Widget _buildFiltersToggle(NoteProvider provider) {
+    final active = <String>[];
+    if (_selectedCategory != 'الكل') active.add(_selectedCategory);
+    if (_selectedFolder != 'الكل') active.add(_selectedFolder);
+    if (_selectedTag.isNotEmpty) active.add('#$_selectedTag');
+    final summary = active.isEmpty ? 'الكل' : active.join(' · ');
+    return Material(
+      color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.45),
+      child: InkWell(
+        onTap: () => setState(() => _filtersExpanded = !_filtersExpanded),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          child: Row(
+            children: [
+              Icon(_filtersExpanded ? Icons.expand_less : Icons.filter_list, size: 20),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  _filtersExpanded ? 'إخفاء عوامل التصفية' : 'تصفية: $summary',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                ),
+              ),
+              if (active.isNotEmpty && !_filtersExpanded)
+                TextButton(
+                  onPressed: () => setState(() {
+                    _selectedCategory = 'الكل';
+                    _selectedFolder = 'الكل';
+                    _selectedTag = '';
+                  }),
+                  child: const Text('مسح'),
+                ),
+            ],
+          ),
+        ),
       ),
     );
   }

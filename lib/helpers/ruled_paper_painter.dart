@@ -21,11 +21,15 @@ class RuledPaperPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    // Soft paper background tint
-    canvas.drawRect(Offset.zero & size, Paint()..color = paperTint.withValues(alpha: 0.35));
+    final isDark = paperTint.computeLuminance() < 0.35;
+    canvas.drawRect(
+      Offset.zero & size,
+      Paint()..color = paperTint.withValues(alpha: isDark ? 0.85 : 0.35),
+    );
 
     if (textured) {
-      final speck = Paint()..color = const Color(0x14000000);
+      final speck = Paint()
+        ..color = isDark ? const Color(0x22FFFFFF) : const Color(0x14000000);
       for (double y = 0; y < size.height; y += 18) {
         for (double x = 0; x < size.width; x += 22) {
           if (((x + y) % 44).abs() < 2) {
@@ -36,15 +40,16 @@ class RuledPaperPainter extends CustomPainter {
     }
 
     final paint = Paint()
-      ..color = lineColor
+      ..color = isDark ? const Color(0x66B0BEC5) : lineColor
       ..strokeWidth = 1.0;
 
     final marginPaint = Paint()
-      ..color = marginColor
+      ..color = isDark ? const Color(0x66EF9A9A) : marginColor
       ..strokeWidth = 1.6;
 
     final textStyle = TextStyle(
-      color: Colors.blueGrey.withValues(alpha: 0.45),
+      color: (isDark ? Colors.blueGrey.shade200 : Colors.blueGrey)
+          .withValues(alpha: 0.5),
       fontSize: 10,
       fontWeight: FontWeight.w600,
     );

@@ -19,6 +19,8 @@ import '../helpers/arabic_font_catalog.dart';
 import '../helpers/export_helper.dart';
 import '../helpers/analytics_helper.dart';
 import '../helpers/share_link_helper.dart';
+import '../helpers/note_pin_helper.dart';
+import '../helpers/permission_helper.dart';
 import './canvas_screen.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
@@ -64,6 +66,8 @@ class _NoteEditorScreenState extends State<NoteEditorScreen> {
   final TextEditingController _replaceController = TextEditingController();
   int _reminderTime = 0;
   int _reminderRepeat = 0;
+  bool _contentUnlocked = true;
+  String? _pinHash;
   
   List<int> _customColors = [];
 
@@ -86,43 +90,23 @@ class _NoteEditorScreenState extends State<NoteEditorScreen> {
       _reminderRepeat = _currentNote!.reminderRepeat;
       _isPinned = _currentNote!.isPinned;
       _folder = _currentNote!.folder;
+      _pinHash = _currentNote!.pinHash;
 
-      String content = _currentNote!.contentHtml ?? '';
-      if (_isEncrypted && content.isNotEmpty) {
-        content = EncryptionHelper.decryptText(content);
-      }
-
-      if (content.isNotEmpty) {
-        try {
-          final doc = Document.fromJson(jsonDecode(content));
-          _controller = QuillController(
-            document: doc,
-            selection: const TextSelection.collapsed(offset: 0),
-          );
-        } catch (e) {
-          _controller = QuillController(
-            document: Document()..insert(0, _currentNote!.content),
-            selection: const TextSelection.collapsed(offset: 0),
-          );
-        }
-      } else {
+      if (_isEncrypted && _pinHash != null && _pinHash!.isNotEmpty) {
+        _contentUnlocked = false;
         _controller = QuillController.basic();
+        WidgetsBinding.instance.addPostFrameCallback((_) => _unlockEncryptedNote());
+      } else {
+        _loadEncryptedOrPlainContent();
       }
     } else {
       _controller = QuillController.basic();
       _fontSizeController.text = _fontSizeBase.toInt().toString();
+      _controller.addListener(_onDocChanged);
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) _focusNode.requestFocus();
       });
     }
-
-    _controller.addListener(() {
-      if (_isProgrammaticUpdate) return;
-      if (!_isDirty && mounted) {
-        setState(() => _isDirty = true);
-      }
-      if (mounted) setState(() {});
-    });
 
     _titleController.addListener(() {
       if (_isProgrammaticUpdate) return;
@@ -132,6 +116,57 @@ class _NoteEditorScreenState extends State<NoteEditorScreen> {
     });
 
     _fontSizeController.text = _fontSizeBase.toInt().toString();
+  }
+
+  void _onDocChanged() {
+    if (_isProgrammaticUpdate) return;
+    if (!_isDirty && mounted) {
+      setState(() => _isDirty = true);
+    }
+    if (mounted) setState(() {});
+  }
+
+  void _loadEncryptedOrPlainContent() {
+    String content = _currentNote!.contentHtml ?? '';
+    if (_isEncrypted && content.isNotEmpty) {
+      content = EncryptionHelper.decryptText(content);
+    }
+
+    if (content.isNotEmpty) {
+      try {
+        final doc = Document.fromJson(jsonDecode(content));
+        _controller = QuillController(
+          document: doc,
+          selection: const TextSelection.collapsed(offset: 0),
+        );
+      } catch (e) {
+        _controller = QuillController(
+          document: Document()..insert(0, _currentNote!.content),
+          selection: const TextSelection.collapsed(offset: 0),
+        );
+      }
+    } else {
+      _controller = QuillController.basic();
+    }
+    _controller.addListener(_onDocChanged);
+  }
+
+  Future<void> _unlockEncryptedNote() async {
+    final ok = await NotePinHelper.askVerifyPin(
+      context,
+      storedHash: _pinHash,
+      title: 'أدخل PIN لفتح المذكرة',
+    );
+    if (!mounted) return;
+    if (!ok) {
+      Navigator.of(context).maybePop();
+      return;
+    }
+    setState(() {
+      _contentUnlocked = true;
+      _controller.dispose();
+      _loadEncryptedOrPlainContent();
+    });
   }
 
   Future<void> _loadCustomColors() async {
@@ -331,12 +366,26 @@ class _NoteEditorScreenState extends State<NoteEditorScreen> {
       );
       return;
     }
+    final proceed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('رابط مشاركة مؤقت'),
+        content: const Text(
+          'سيُرفع المحتوى النصّي إلى السحابة لمدة محدودة. لا تستخدمه لمحتوى حسّاس.',
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('إلغاء')),
+          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('متابعة')),
+        ],
+      ),
+    );
+    if (proceed != true || !mounted) return;
     if (_currentNote == null) {
       await _saveNote(showSnackbar: false);
     }
     if (_currentNote == null || !mounted) return;
     try {
-      final link = await ShareLinkHelper.createProtectedLink(_currentNote!);
+      final link = await ShareLinkHelper.createTemporaryShareLink(_currentNote!);
       if (!mounted) return;
       if (link == null) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -466,6 +515,7 @@ class _NoteEditorScreenState extends State<NoteEditorScreen> {
           reminderRepeat: _reminderRepeat,
           isPinned: _isPinned,
           folder: _folder,
+          pinHash: _pinHash,
         );
         _currentNote = await provider.addNote(newNote);
       } else {
@@ -483,6 +533,7 @@ class _NoteEditorScreenState extends State<NoteEditorScreen> {
         _currentNote!.reminderRepeat = _reminderRepeat;
         _currentNote!.isPinned = _isPinned;
         _currentNote!.folder = _folder;
+        _currentNote!.pinHash = _pinHash;
         await provider.updateNote(_currentNote!);
       }
 
@@ -524,6 +575,8 @@ class _NoteEditorScreenState extends State<NoteEditorScreen> {
               title: const Text('الكاميرا'),
               onTap: () async {
                 Navigator.pop(context);
+                final allowed = await PermissionHelper.ensureCamera(context);
+                if (!allowed || !mounted) return;
                 final text = await MediaHelper.pickImageAndRecognizeText(ImageSource.camera);
                 if (text != null) _insertTextAtCursor(text);
               },
@@ -533,6 +586,8 @@ class _NoteEditorScreenState extends State<NoteEditorScreen> {
               title: const Text('المعرض'),
               onTap: () async {
                 Navigator.pop(context);
+                final allowed = await PermissionHelper.ensurePhotos(context);
+                if (!allowed || !mounted) return;
                 final text = await MediaHelper.pickImageAndRecognizeText(ImageSource.gallery);
                 if (text != null) _insertTextAtCursor(text);
               },
@@ -813,6 +868,8 @@ class _NoteEditorScreenState extends State<NoteEditorScreen> {
       setState(() => _isListening = false);
       return;
     }
+    final micOk = await PermissionHelper.ensureMicrophone(context);
+    if (!micOk || !mounted) return;
     final ok = await MediaHelper.initSpeech();
     if (!ok && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('التعرف على الصوت غير متاح')));
@@ -924,7 +981,7 @@ class _NoteEditorScreenState extends State<NoteEditorScreen> {
             ),
             ListTile(
               leading: const Icon(Icons.link),
-              title: const Text('مشاركة رابط محمي'),
+              title: const Text('مشاركة رابط مؤقت'),
               onTap: () {
                 Navigator.pop(context);
                 _shareProtectedLink();
@@ -954,13 +1011,31 @@ class _NoteEditorScreenState extends State<NoteEditorScreen> {
             ),
             ListTile(
               leading: Icon(_isEncrypted ? Icons.lock : Icons.lock_open),
-              title: const Text('تشفير المذكرة'),
-              onTap: () {
+              title: Text(_isEncrypted ? 'إزالة تشفير المذكرة' : 'تشفير المذكرة بـ PIN'),
+              subtitle: const Text('التشفير المحلي + رمز PIN عند الفتح'),
+              onTap: () async {
                 Navigator.pop(context);
-                setState(() {
-                  _isEncrypted = !_isEncrypted;
-                  _isDirty = true;
-                });
+                if (!_isEncrypted) {
+                  final pin = await NotePinHelper.askNewPin(context);
+                  if (pin == null || !mounted) return;
+                  setState(() {
+                    _isEncrypted = true;
+                    _pinHash = NotePinHelper.hashPin(pin);
+                    _isDirty = true;
+                  });
+                } else {
+                  final ok = await NotePinHelper.askVerifyPin(
+                    context,
+                    storedHash: _pinHash,
+                    title: 'أدخل PIN لإزالة التشفير',
+                  );
+                  if (!ok || !mounted) return;
+                  setState(() {
+                    _isEncrypted = false;
+                    _pinHash = null;
+                    _isDirty = true;
+                  });
+                }
               },
             ),
             ListTile(
@@ -1296,6 +1371,9 @@ class _NoteEditorScreenState extends State<NoteEditorScreen> {
                                 showLineNumbers: settings.showLineNumbers,
                                 textured: settings.paperTexture,
                                 showHolePunches: settings.paperHoles,
+                                paperTint: Theme.of(context).brightness == Brightness.dark
+                                    ? const Color(0xFF1E2226)
+                                    : const Color(0xFFFFFDF5),
                               ),
                             ),
                           ),

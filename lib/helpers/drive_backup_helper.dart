@@ -80,6 +80,15 @@ class DriveBackupHelper {
     return exportPath;
   }
 
+  static Future<String?> lastBackupLabel() async {
+    final prefs = await SharedPreferences.getInstance();
+    final last = prefs.getInt(_lastDriveKey) ?? 0;
+    if (last <= 0) return null;
+    final dt = DateTime.fromMillisecondsSinceEpoch(last);
+    return '${dt.year}/${dt.month.toString().padLeft(2, '0')}/${dt.day.toString().padLeft(2, '0')} '
+        '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
+  }
+
   static Future<String?> runWeeklyIfDue({bool force = false}) async {
     final prefs = await SharedPreferences.getInstance();
     if (!(prefs.getBool('drive_auto_backup') ?? false) && !force) return null;

@@ -54,7 +54,7 @@ class _LoginScreenState extends State<LoginScreen> {
       } else {
         final cred = await _authService.signIn(email, password);
         if (!mounted) return;
-        await PermissionHelper.ensureAllGranted(context);
+        await PermissionHelper.ensureNotifications(context);
         if (!mounted) return;
         Provider.of<NoteProvider>(context, listen: false).bindUser(cred.user?.uid);
         await Provider.of<NoteProvider>(context, listen: false).syncAll();

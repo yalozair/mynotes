@@ -44,7 +44,6 @@ dependencies:
   flutter_quill: ^11.5.1
   encrypt: ^5.0.3
   local_auth: ^3.0.2
-  google_generative_ai: ^0.4.7
   shared_preferences: ^2.2.2
   google_mlkit_text_recognition: ^0.16.0
   speech_to_text: ^7.4.0

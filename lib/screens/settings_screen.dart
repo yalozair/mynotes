@@ -17,6 +17,9 @@ import '../helpers/native_helper.dart';
 import '../helpers/sticky_note_helper.dart';
 import '../helpers/analytics_helper.dart';
 import '../helpers/permission_helper.dart';
+import '../helpers/privacy_helper.dart';
+import '../helpers/ad_helper.dart';
+import '../services/auth_service.dart';
 import './login_screen.dart';
 import './onboarding_screen.dart';
 
@@ -31,13 +34,22 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _isLockEnabled = false;
   bool _quickNoteEnabled = true;
   bool _isUploadingDrive = false;
+  bool _showAdvancedLayout = false;
+  String? _lastDriveBackup;
   final FirebaseAuth _auth = FirebaseAuth.instance;
+  final _authService = AuthService();
 
   @override
   void initState() {
     super.initState();
     _loadAuthSettings();
     _loadQuickNotePref();
+    _loadDriveLabel();
+  }
+
+  Future<void> _loadDriveLabel() async {
+    final label = await DriveBackupHelper.lastBackupLabel();
+    if (mounted) setState(() => _lastDriveBackup = label);
   }
 
   Future<void> _loadQuickNotePref() async {
@@ -93,9 +105,52 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final result = await DriveBackupHelper.uploadEncryptedBackup();
     if (!mounted) return;
     setState(() => _isUploadingDrive = false);
+    await _loadDriveLabel();
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(result != null ? 'تم رفع النسخة الاحتياطية بنجاح' : 'تعذر رفع النسخة الاحتياطية')),
     );
+  }
+
+  Future<void> _deleteAccount() async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('حذف الحساب نهائياً؟'),
+        content: const Text(
+          'سيتم محاولة حذف بيانات السحابة المرتبطة بحسابك ثم حذف الحساب من Firebase.\n'
+          'المذكرات المحلية على الجهاز لن تُحذف تلقائياً.\n'
+          'قد يطلب النظام إعادة تسجيل الدخول إن كانت الجلسة قديمة.',
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('إلغاء')),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('حذف الحساب'),
+          ),
+        ],
+      ),
+    );
+    if (confirm != true || !mounted) return;
+    try {
+      await _authService.deleteAccountAndCloudData();
+      if (!mounted) return;
+      setState(() {});
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('تم حذف الحساب')),
+      );
+    } on FirebaseAuthException catch (e) {
+      if (!mounted) return;
+      final msg = e.code == 'requires-recent-login'
+          ? 'أعد تسجيل الدخول ثم حاول حذف الحساب فوراً'
+          : (e.message ?? 'تعذر حذف الحساب');
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('تعذر حذف الحساب: $e')),
+      );
+    }
   }
 
   void _signOut() async {
@@ -151,6 +206,43 @@ class _SettingsScreenState extends State<SettingsScreen> {
               },
             ),
 
+          if (user != null)
+            ListTile(
+              leading: const Icon(Icons.delete_forever, color: Colors.redAccent),
+              title: const Text('حذف الحساب وبيانات السحابة', style: TextStyle(color: Colors.redAccent)),
+              subtitle: const Text('حق الخصوصية / Play — يحذف الحساب السحابي'),
+              onTap: _deleteAccount,
+            ),
+
+          _sectionTitle('الخصوصية والإعلانات'),
+          ListTile(
+            leading: const Icon(Icons.policy_outlined),
+            title: const Text('سياسة الخصوصية'),
+            subtitle: const Text('كيف نتعامل مع بياناتك والإعلانات والأذونات'),
+            onTap: () => PrivacyHelper.showPrivacyScreen(context),
+          ),
+          ListTile(
+            leading: const Icon(Icons.open_in_browser),
+            title: const Text('فتح سياسة الخصوصية على الويب'),
+            onTap: () async {
+              try {
+                await PrivacyHelper.openPublicPolicy();
+              } catch (_) {
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('تعذر فتح الرابط — افتح السياسة داخل التطبيق')),
+                  );
+                }
+              }
+            },
+          ),
+          ListTile(
+            leading: const Icon(Icons.ads_click),
+            title: const Text('خيارات خصوصية الإعلانات'),
+            subtitle: const Text('UMP — يظهر عند اشتراط منطقتك'),
+            onTap: () => AdHelper.showPrivacyOptionsIfRequired(),
+          ),
+
           _sectionTitle('المظهر والسمات'),
           ListTile(
             title: const Text('وضع السمات'),
@@ -170,8 +262,36 @@ class _SettingsScreenState extends State<SettingsScreen> {
             trailing: const Icon(Icons.font_download),
             onTap: () => _showFontPickerDialog(context, settings),
           ),
+          ListTile(
+            title: const Text('طريقة العرض'),
+            subtitle: Text(_getViewModeText(settings.viewMode)),
+            trailing: const Icon(Icons.view_module),
+            onTap: () => _showViewModeDialog(context, settings),
+          ),
+          SwitchListTile(
+            title: const Text('إظهار أسطر الورق'),
+            value: settings.showLines,
+            onChanged: (val) => settings.setShowLines(val),
+          ),
+          SwitchListTile(
+            title: const Text('إظهار أرقام الأسطر'),
+            value: settings.showLineNumbers,
+            onChanged: (val) => settings.setShowLineNumbers(val),
+          ),
+          SwitchListTile(
+            title: const Text('ملمس الورق'),
+            subtitle: const Text('إظهار خلفية بملمس الورق في المحرر'),
+            value: settings.paperTexture,
+            onChanged: (val) => settings.setPaperTexture(val),
+          ),
+          SwitchListTile(
+            title: const Text('ثقوب الورق'),
+            subtitle: const Text('إظهار ثقوب دفتر الملاحظات على الحافة'),
+            value: settings.paperHoles,
+            onChanged: (val) => settings.setPaperHoles(val),
+          ),
 
-          _sectionTitle('الأمان'),
+          _sectionTitle('الأمان والصلاحيات'),
           SwitchListTile(
             title: const Text('قفل التطبيق بقفل الجهاز'),
             subtitle: const Text('بصمة، وجه، نمط، PIN، أو كلمة مرور الجهاز'),
@@ -181,15 +301,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
           if (Platform.isAndroid)
             ListTile(
               leading: const Icon(Icons.privacy_tip_outlined),
-              title: const Text('صلاحيات أندرويد 13/14'),
+              title: const Text('مراجعة صلاحيات أندرويد 13/14'),
               subtitle: const Text(
-                'أندرويد 13+: إشعارات منفصلة (POST_NOTIFICATIONS)، صور عبر READ_MEDIA_IMAGES، '
-                'وميكروفون/كاميرا عند الاستخدام. التخزين القديم محدود لإصدارات أقدم فقط.',
+                'الكاميرا/الميكروفون/الصور عند الاستخدام فقط. هنا للمراجعة اليدوية.',
               ),
               isThreeLine: true,
               trailing: TextButton(
                 onPressed: () async {
-                  await PermissionHelper.ensureAllGranted(context);
+                  await PermissionHelper.reviewAll(context);
                 },
                 child: const Text('مراجعة'),
               ),
@@ -204,52 +323,46 @@ class _SettingsScreenState extends State<SettingsScreen> {
             onTap: () => _showTrashIntervalDialog(context, settings),
           ),
           SwitchListTile(
-            title: const Text('إظهار أسطر الورق'),
-            value: settings.showLines,
-            onChanged: (val) => settings.setShowLines(val),
-          ),
-          SwitchListTile(
-            title: const Text('إظهار أرقام الأسطر'),
-            value: settings.showLineNumbers,
-            onChanged: (val) => settings.setShowLineNumbers(val),
-          ),
-          ListTile(
-            title: const Text('أعمدة الشاشة الرئيسية'),
-            subtitle: Slider(
-              value: settings.gridColumns.toDouble(),
-              min: 1, max: 8, divisions: 7,
-              label: settings.gridColumns.toString(),
-              onChanged: (val) => settings.setGridColumns(val.toInt()),
-            ),
-          ),
-          ListTile(
-            title: const Text('صفوف الشاشة الرئيسية المتوقعة'),
-            subtitle: Slider(
-              value: settings.gridRows.toDouble(),
-              min: 1, max: 8, divisions: 7,
-              label: settings.gridRows.toString(),
-              onChanged: (val) => settings.setGridRows(val.toInt()),
-            ),
-          ),
-          SwitchListTile(
-            title: const Text('ملمس الورق'),
-            subtitle: const Text('إظهار خلفية بملمس الورق في المحرر'),
-            value: settings.paperTexture,
-            onChanged: (val) => settings.setPaperTexture(val),
-          ),
-          SwitchListTile(
-            title: const Text('ثقوب الورق'),
-            subtitle: const Text('إظهار ثقوب دفتر الملاحظات على الحافة'),
-            value: settings.paperHoles,
-            onChanged: (val) => settings.setPaperHoles(val),
-          ),
-          SwitchListTile(
             title: const Text('الإملاء الصوتي المستمر'),
             subtitle: const Text('الاستمرار في الاستماع دون توقف بعد كل جملة'),
             value: settings.continuousSpeech,
             onChanged: (val) => settings.setContinuousSpeech(val),
           ),
+          SwitchListTile(
+            title: const Text('خيارات الشبكة المتقدمة'),
+            subtitle: const Text('أعمدة وصفوف الشاشة الرئيسية'),
+            value: _showAdvancedLayout,
+            onChanged: (v) => setState(() => _showAdvancedLayout = v),
+          ),
+          if (_showAdvancedLayout) ...[
+            ListTile(
+              title: const Text('أعمدة الشاشة الرئيسية'),
+              subtitle: Slider(
+                value: settings.gridColumns.toDouble(),
+                min: 1, max: 8, divisions: 7,
+                label: settings.gridColumns.toString(),
+                onChanged: (val) => settings.setGridColumns(val.toInt()),
+              ),
+            ),
+            ListTile(
+              title: const Text('صفوف الشاشة الرئيسية المتوقعة'),
+              subtitle: Slider(
+                value: settings.gridRows.toDouble(),
+                min: 1, max: 8, divisions: 7,
+                label: settings.gridRows.toString(),
+                onChanged: (val) => settings.setGridRows(val.toInt()),
+              ),
+            ),
+          ],
           _sectionTitle('النسخ الاحتياطي والاختصارات'),
+          const ListTile(
+            leading: Icon(Icons.info_outline),
+            title: Text('مهم عن النسخ الاحتياطي'),
+            subtitle: Text(
+              'ملف .mynotes مشفّر بمفتاح هذا الجهاز. الاستيراد على جهاز آخر قد يفشل — استخدم المزامنة السحابية أو نفس الجهاز.',
+            ),
+            isThreeLine: true,
+          ),
           ListTile(
             leading: const Icon(Icons.upload_file),
             title: const Text('تصدير نسخة احتياطية مشفّرة'),
@@ -283,7 +396,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               } catch (e) {
                 if (mounted) {
                   ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('فشل الاستيراد — تأكد من الملف')),
+                    const SnackBar(content: Text('فشل الاستيراد — تأكد أن الملف من نفس الجهاز/المفتاح')),
                   );
                 }
               }
@@ -291,7 +404,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
           SwitchListTile(
             title: const Text('نسخ احتياطي أسبوعي تلقائي إلى Drive'),
-            subtitle: const Text('رفع نسخة مشفّرة تلقائياً إلى Google Drive كل أسبوع'),
+            subtitle: Text(
+              _lastDriveBackup == null
+                  ? 'رفع نسخة مشفّرة إلى Google Drive كل أسبوع (بموافقتك)'
+                  : 'آخر رفع: $_lastDriveBackup',
+            ),
             value: settings.driveAutoBackup,
             onChanged: (val) => settings.setDriveAutoBackup(val),
           ),
@@ -352,12 +469,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ),
               );
             },
-          ),
-          ListTile(
-            title: const Text('طريقة العرض'),
-            subtitle: Text(_getViewModeText(settings.viewMode)),
-            trailing: const Icon(Icons.view_module),
-            onTap: () => _showViewModeDialog(context, settings),
           ),
         ],
       ),

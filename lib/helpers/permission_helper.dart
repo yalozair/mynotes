@@ -15,26 +15,32 @@ class AppPermissionItem {
 }
 
 class PermissionHelper {
-  /// صلاحيات تُطلب عند الدخول — بدون overlay (يُطلب عند تفعيل المذكرة العائمة فقط).
-  static List<AppPermissionItem> get requiredItems {
-    final items = <AppPermissionItem>[
-      const AppPermissionItem(
+  /// إشعارات فقط عند التشغيل — بقية الصلاحيات عند الاستخدام (سياسة Play).
+  static List<AppPermissionItem> get startupItems {
+    return const [
+      AppPermissionItem(
         permission: Permission.notification,
         title: 'الإشعارات',
-        reason: 'لتذكيرات المذكرات وإشعارات Firebase',
+        reason: 'لتذكيرات المذكرات واختصار المذكرة السريعة',
       ),
+    ];
+  }
+
+  /// قائمة كاملة للمراجعة اليدوية من الإعدادات.
+  static List<AppPermissionItem> get reviewItems {
+    final items = <AppPermissionItem>[
+      ...startupItems,
       const AppPermissionItem(
         permission: Permission.camera,
         title: 'الكاميرا',
-        reason: 'لمسح النصوص (OCR) وإرفاق الصور',
+        reason: 'لمسح النصوص (OCR) وإرفاق الصور عند اختيارك',
       ),
       const AppPermissionItem(
         permission: Permission.microphone,
         title: 'الميكروفون',
-        reason: 'لتحويل الكلام إلى نص داخل المذكرة',
+        reason: 'لتحويل الكلام إلى نص عند تفعيله',
       ),
     ];
-
     if (Platform.isAndroid) {
       items.add(const AppPermissionItem(
         permission: Permission.photos,
@@ -42,27 +48,104 @@ class PermissionHelper {
         reason: 'لاختيار الصور وإرفاقها في المذكرات',
       ));
     }
-
     return items;
   }
 
-  static Future<bool> ensureAllGranted(BuildContext context) async {
+  @Deprecated('Use ensureNotifications or feature-specific requests')
+  static List<AppPermissionItem> get requiredItems => reviewItems;
+
+  static Future<bool> ensureNotifications(BuildContext context) async {
     if (!Platform.isAndroid && !Platform.isIOS) return true;
+    return _requestItems(context, startupItems, optional: true);
+  }
 
-    final missing = <AppPermissionItem>[];
-    for (final item in requiredItems) {
-      final status = await item.permission.status;
-      if (!status.isGranted && !status.isLimited) {
-        missing.add(item);
-      }
+  static Future<bool> ensureCamera(BuildContext context) async {
+    return _requestSingle(
+      context,
+      const AppPermissionItem(
+        permission: Permission.camera,
+        title: 'الكاميرا',
+        reason: 'لاستخدام الكاميرا لمسح النص أو التقاط صورة',
+      ),
+    );
+  }
+
+  static Future<bool> ensurePhotos(BuildContext context) async {
+    if (!Platform.isAndroid && !Platform.isIOS) return true;
+    return _requestSingle(
+      context,
+      const AppPermissionItem(
+        permission: Permission.photos,
+        title: 'معرض الصور',
+        reason: 'لاختيار صورة من المعرض',
+      ),
+    );
+  }
+
+  static Future<bool> ensureMicrophone(BuildContext context) async {
+    return _requestSingle(
+      context,
+      const AppPermissionItem(
+        permission: Permission.microphone,
+        title: 'الميكروفون',
+        reason: 'لتحويل الصوت إلى نص',
+      ),
+    );
+  }
+
+  /// مراجعة يدوية من الإعدادات — لا تُستدعى عند كل تشغيل.
+  static Future<bool> reviewAll(BuildContext context) async {
+    if (!Platform.isAndroid && !Platform.isIOS) return true;
+    return _requestItems(context, reviewItems, optional: true);
+  }
+
+  @Deprecated('Use ensureNotifications / reviewAll')
+  static Future<bool> ensureAllGranted(BuildContext context) => reviewAll(context);
+
+  static Future<bool> _requestSingle(
+    BuildContext context,
+    AppPermissionItem item,
+  ) async {
+    if (!Platform.isAndroid && !Platform.isIOS) return true;
+    final status = await item.permission.status;
+    if (status.isGranted || status.isLimited) return true;
+    if (!context.mounted) return false;
+
+    final proceed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('صلاحية ${item.title}'),
+        content: Text(item.reason),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('لاحقاً')),
+          ElevatedButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('متابعة')),
+        ],
+      ),
+    );
+    if (proceed != true) return false;
+    final result = await item.permission.request();
+    if (result.isPermanentlyDenied && context.mounted) {
+      await _showOpenSettingsDialog(context, item.title);
     }
+    return result.isGranted || result.isLimited;
+  }
 
+  static Future<bool> _requestItems(
+    BuildContext context,
+    List<AppPermissionItem> items, {
+    bool optional = false,
+  }) async {
+    final missing = <AppPermissionItem>[];
+    for (final item in items) {
+      final status = await item.permission.status;
+      if (!status.isGranted && !status.isLimited) missing.add(item);
+    }
     if (missing.isEmpty) return true;
     if (!context.mounted) return false;
 
     final proceed = await showDialog<bool>(
       context: context,
-      barrierDismissible: false,
+      barrierDismissible: optional,
       builder: (ctx) => AlertDialog(
         title: const Text('صلاحيات التطبيق'),
         content: SingleChildScrollView(
@@ -71,7 +154,7 @@ class PermissionHelper {
             mainAxisSize: MainAxisSize.min,
             children: [
               const Text(
-                'يحتاج التطبيق الصلاحيات التالية للعمل بشكل كامل:',
+                'سنطلب فقط الصلاحيات التالية عند الحاجة:',
                 style: TextStyle(fontWeight: FontWeight.bold),
               ),
               const SizedBox(height: 12),
@@ -88,11 +171,6 @@ class PermissionHelper {
                       ],
                     ),
                   )),
-              const SizedBox(height: 8),
-              const Text(
-                'اضغط «تفعيل» لفتح نافذة موافقة النظام.',
-                style: TextStyle(fontSize: 12, color: Colors.grey),
-              ),
             ],
           ),
         ),
@@ -103,19 +181,16 @@ class PermissionHelper {
       ),
     );
 
-    if (proceed != true) return false;
-
+    if (proceed != true) return optional;
     for (final item in missing) {
       final result = await item.permission.request();
       if (result.isPermanentlyDenied && context.mounted) {
         await _showOpenSettingsDialog(context, item.title);
       }
     }
-
-    return await allGranted();
+    return await allGranted(items);
   }
 
-  /// صلاحية الظهور فوق التطبيقات — تُطلب فقط عند تفعيل المذكرة العائمة.
   static Future<bool> requestOverlayPermission(BuildContext context) async {
     if (!Platform.isAndroid) return true;
 
@@ -173,8 +248,8 @@ class PermissionHelper {
     return await Permission.systemAlertWindow.status.isGranted;
   }
 
-  static Future<bool> allGranted() async {
-    for (final item in requiredItems) {
+  static Future<bool> allGranted([List<AppPermissionItem>? items]) async {
+    for (final item in items ?? reviewItems) {
       final status = await item.permission.status;
       if (!status.isGranted && !status.isLimited) return false;
     }

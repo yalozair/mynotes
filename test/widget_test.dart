@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:my_nots_flutter/helpers/encryption_helper.dart';
+import 'package:my_nots_flutter/helpers/note_pin_helper.dart';
 import 'package:my_nots_flutter/helpers/writing_streak_helper.dart';
 import 'package:my_nots_flutter/models/note.dart';
 import 'package:my_nots_flutter/models/note_revision.dart';
@@ -45,12 +46,14 @@ void main() {
       folder: 'شخصي',
       folderColor: 0xFFFF0000,
       folderIcon: 'star',
+      pinHash: 'abc',
     );
     final mapped = Note.fromMap(note.toMap());
     expect(mapped.isPinned, isTrue);
     expect(mapped.folder, 'شخصي');
     expect(mapped.folderColor, 0xFFFF0000);
     expect(mapped.folderIcon, 'star');
+    expect(mapped.pinHash, 'abc');
   });
 
   test('EncryptionHelper uses random IV and can decrypt its own output', () async {
@@ -68,6 +71,14 @@ void main() {
   test('EncryptionHelper rejects empty ciphertext gracefully', () async {
     await EncryptionHelper.init();
     expect(EncryptionHelper.decryptText(''), '');
+  });
+
+  test('NotePinHelper hashes and verifies PIN', () {
+    final hash = NotePinHelper.hashPin('1234');
+    expect(hash, isNot(equals('1234')));
+    expect(NotePinHelper.verify('1234', hash), isTrue);
+    expect(NotePinHelper.verify('9999', hash), isFalse);
+    expect(NotePinHelper.verify('any', null), isTrue);
   });
 
   test('pinned notes sort ahead of newer unpinned notes', () {
