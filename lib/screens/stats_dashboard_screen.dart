@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import 'package:fl_chart/fl_chart.dart';
 import '../providers/note_provider.dart';
 import '../models/note.dart';
+import '../helpers/writing_streak_helper.dart';
 import 'package:intl/intl.dart';
 
 class StatsDashboardScreen extends StatefulWidget {
@@ -13,12 +14,41 @@ class StatsDashboardScreen extends StatefulWidget {
 }
 
 class _StatsDashboardScreenState extends State<StatsDashboardScreen> {
+  int _currentStreak = 0;
+  int _bestStreak = 0;
+  int _daysThisMonth = 0;
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       Provider.of<NoteProvider>(context, listen: false).fetchTrashNotes();
+      _loadStreaks();
     });
+  }
+
+  Future<void> _loadStreaks() async {
+    final current = await WritingStreakHelper.currentStreak();
+    final best = await WritingStreakHelper.bestStreak();
+    final month = await WritingStreakHelper.daysWrittenThisMonth();
+    if (!mounted) return;
+    setState(() {
+      _currentStreak = current;
+      _bestStreak = best;
+      _daysThisMonth = month;
+    });
+  }
+
+  int _wordCount(List<Note> notes) {
+    var total = 0;
+    for (final n in notes) {
+      if (n.isEncrypted) continue;
+      total += n.content
+          .split(RegExp(r'\s+'))
+          .where((w) => w.trim().isNotEmpty)
+          .length;
+    }
+    return total;
   }
 
   @override
@@ -30,6 +60,7 @@ class _StatsDashboardScreenState extends State<StatsDashboardScreen> {
     int totalNotes = allNotes.length;
     int encryptedNotes = allNotes.where((n) => n.isEncrypted).length;
     int deletedNotes = trashNotes.length;
+    final words = _wordCount(allNotes);
 
     Map<String, int> categoryCounts = {};
     for (var note in allNotes) {
@@ -46,6 +77,8 @@ class _StatsDashboardScreenState extends State<StatsDashboardScreen> {
         child: Column(
           children: [
             _buildQuickStats(totalNotes, encryptedNotes, deletedNotes),
+            const SizedBox(height: 16),
+            _buildWritingStats(words),
             const SizedBox(height: 24),
             _buildCategoryChart(categoryCounts),
             const SizedBox(height: 24),
@@ -53,6 +86,17 @@ class _StatsDashboardScreenState extends State<StatsDashboardScreen> {
           ],
         ),
       ),
+    );
+  }
+
+  Widget _buildWritingStats(int words) {
+    return Row(
+      children: [
+        _statCard('سلسلة الأيام', '$_currentStreak', Colors.teal),
+        _statCard('أفضل سلسلة', '$_bestStreak', Colors.indigo),
+        _statCard('أيام هذا الشهر', '$_daysThisMonth', Colors.orange),
+        _statCard('كلمات تقريبية', words.toString(), Colors.brown),
+      ],
     );
   }
 
@@ -127,7 +171,6 @@ class _StatsDashboardScreenState extends State<StatsDashboardScreen> {
   Widget _buildNotesOverTimeChart(List<Note> notes) {
     if (notes.isEmpty) return const SizedBox.shrink();
 
-    // Group notes by day for the last 7 days
     Map<String, int> dailyCounts = {};
     DateTime now = DateTime.now();
     for (int i = 0; i < 7; i++) {

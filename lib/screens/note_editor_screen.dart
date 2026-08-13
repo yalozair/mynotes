@@ -18,6 +18,7 @@ import '../helpers/sticky_note_helper.dart';
 import '../helpers/arabic_font_catalog.dart';
 import '../helpers/export_helper.dart';
 import '../helpers/analytics_helper.dart';
+import '../helpers/share_link_helper.dart';
 import './canvas_screen.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
@@ -53,8 +54,14 @@ class _NoteEditorScreenState extends State<NoteEditorScreen> {
   String _fontName = 'Cairo';
   double _fontSizeBase = 18.0;
   bool _focusMode = false;
+  bool _readOnlyMode = false;
   bool _isListening = false;
   bool _isRtl = true;
+  bool _isPinned = false;
+  String _folder = 'الافتراضي';
+  bool _findReplaceVisible = false;
+  final TextEditingController _findController = TextEditingController();
+  final TextEditingController _replaceController = TextEditingController();
   int _reminderTime = 0;
   int _reminderRepeat = 0;
   
@@ -77,6 +84,8 @@ class _NoteEditorScreenState extends State<NoteEditorScreen> {
       _isRtl = _currentNote!.isRtl;
       _reminderTime = _currentNote!.reminderTime;
       _reminderRepeat = _currentNote!.reminderRepeat;
+      _isPinned = _currentNote!.isPinned;
+      _folder = _currentNote!.folder;
 
       String content = _currentNote!.contentHtml ?? '';
       if (_isEncrypted && content.isNotEmpty) {
@@ -148,8 +157,257 @@ class _NoteEditorScreenState extends State<NoteEditorScreen> {
     _controller.dispose();
     _titleController.dispose();
     _fontSizeController.dispose();
+    _findController.dispose();
+    _replaceController.dispose();
     _focusNode.dispose();
+    MediaHelper.stopListening();
     super.dispose();
+  }
+
+  void _toggleFindReplace() {
+    setState(() => _findReplaceVisible = !_findReplaceVisible);
+  }
+
+  void _findNext() {
+    final q = _findController.text;
+    if (q.isEmpty || _controller.document.length <= 1) return;
+    final plain = _controller.document.toPlainText();
+    final from = (_controller.selection.baseOffset + 1).clamp(0, plain.length);
+    var idx = plain.indexOf(q, from);
+    if (idx < 0) idx = plain.indexOf(q);
+    if (idx < 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('لا توجد نتائج')),
+      );
+      return;
+    }
+    _controller.updateSelection(
+      TextSelection(baseOffset: idx, extentOffset: idx + q.length),
+      ChangeSource.local,
+    );
+    _focusNode.requestFocus();
+  }
+
+  void _replaceOne() {
+    final q = _findController.text;
+    final r = _replaceController.text;
+    if (q.isEmpty) return;
+    final sel = _controller.selection;
+    final plain = _controller.document.toPlainText();
+    if (sel.isValid &&
+        !sel.isCollapsed &&
+        sel.start >= 0 &&
+        sel.end <= plain.length &&
+        plain.substring(sel.start, sel.end) == q) {
+      _controller.replaceText(sel.start, q.length, r, null);
+      _controller.updateSelection(
+        TextSelection.collapsed(offset: sel.start + r.length),
+        ChangeSource.local,
+      );
+      setState(() => _isDirty = true);
+      return;
+    }
+    _findNext();
+  }
+
+  void _replaceAll() {
+    final q = _findController.text;
+    final r = _replaceController.text;
+    if (q.isEmpty) return;
+    var plain = _controller.document.toPlainText();
+    if (!plain.contains(q)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('لا توجد نتائج')),
+      );
+      return;
+    }
+    var count = 0;
+    var idx = plain.indexOf(q);
+    while (idx >= 0) {
+      _controller.replaceText(idx, q.length, r, null);
+      count++;
+      plain = _controller.document.toPlainText();
+      idx = plain.indexOf(q, idx + r.length);
+    }
+    setState(() => _isDirty = true);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('تم استبدال $count موضع')),
+    );
+  }
+
+  Future<void> _showRevisions() async {
+    if (_currentNote?.id == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('احفظ المذكرة أولاً لعرض السجل')),
+      );
+      return;
+    }
+    final revisions =
+        await context.read<NoteProvider>().revisionsFor(_currentNote!.id!);
+    if (!mounted) return;
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (ctx) {
+        if (revisions.isEmpty) {
+          return const Padding(
+            padding: EdgeInsets.all(24),
+            child: Center(child: Text('لا توجد نسخ سابقة بعد')),
+          );
+        }
+        return ListView.builder(
+          shrinkWrap: true,
+          itemCount: revisions.length,
+          itemBuilder: (_, i) {
+            final rev = revisions[i];
+            final when = DateFormat('yyyy/MM/dd HH:mm')
+                .format(DateTime.fromMillisecondsSinceEpoch(rev.savedAt));
+            return ListTile(
+              leading: const Icon(Icons.history),
+              title: Text(rev.title.isEmpty ? 'بدون عنوان' : rev.title),
+              subtitle: Text(when),
+              onTap: () async {
+                Navigator.pop(ctx);
+                final ok = await showDialog<bool>(
+                  context: context,
+                  builder: (d) => AlertDialog(
+                    title: const Text('استعادة نسخة؟'),
+                    content: Text('سيتم استبدال المحتوى الحالي بنسخة $when'),
+                    actions: [
+                      TextButton(
+                        onPressed: () => Navigator.pop(d, false),
+                        child: const Text('إلغاء'),
+                      ),
+                      FilledButton(
+                        onPressed: () => Navigator.pop(d, true),
+                        child: const Text('استعادة'),
+                      ),
+                    ],
+                  ),
+                );
+                if (ok != true || !mounted) return;
+                try {
+                  final raw = rev.contentHtml ?? rev.content;
+                  Document doc;
+                  try {
+                    doc = Document.fromJson(jsonDecode(raw) as List<dynamic>);
+                  } catch (_) {
+                    doc = Document()..insert(0, rev.content);
+                  }
+                  setState(() {
+                    _controller.dispose();
+                    _controller = QuillController(
+                      document: doc,
+                      selection: const TextSelection.collapsed(offset: 0),
+                    );
+                    _controller.addListener(() {
+                      if (_isProgrammaticUpdate) return;
+                      if (!_isDirty && mounted) {
+                        setState(() => _isDirty = true);
+                      }
+                      if (mounted) setState(() {});
+                    });
+                    _titleController.text = rev.title;
+                    _isDirty = true;
+                  });
+                } catch (_) {
+                  if (!mounted) return;
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('تعذر استعادة النسخة')),
+                  );
+                }
+              },
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Future<void> _shareProtectedLink() async {
+    if (_isEncrypted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('لا يمكن مشاركة رابط لمذكرة مشفّرة')),
+      );
+      return;
+    }
+    if (_currentNote == null) {
+      await _saveNote(showSnackbar: false);
+    }
+    if (_currentNote == null || !mounted) return;
+    try {
+      final link = await ShareLinkHelper.createProtectedLink(_currentNote!);
+      if (!mounted) return;
+      if (link == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('تعذر إنشاء رابط المشاركة')),
+        );
+      }
+    } on StateError catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('تعذر إنشاء الرابط: $e')),
+      );
+    }
+  }
+
+  Widget _buildFindReplaceBar() {
+    return Material(
+      elevation: 1,
+      color: Theme.of(context).colorScheme.surfaceContainerHighest,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+        child: Column(
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _findController,
+                    decoration: const InputDecoration(
+                      hintText: 'بحث...',
+                      isDense: true,
+                      border: OutlineInputBorder(),
+                    ),
+                    onSubmitted: (_) => _findNext(),
+                  ),
+                ),
+                IconButton(
+                  tooltip: 'التالي',
+                  icon: const Icon(Icons.keyboard_arrow_down),
+                  onPressed: _findNext,
+                ),
+                IconButton(
+                  tooltip: 'إغلاق',
+                  icon: const Icon(Icons.close),
+                  onPressed: () => setState(() => _findReplaceVisible = false),
+                ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _replaceController,
+                    decoration: const InputDecoration(
+                      hintText: 'استبدال بـ...',
+                      isDense: true,
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                ),
+                TextButton(onPressed: _replaceOne, child: const Text('استبدال')),
+                TextButton(onPressed: _replaceAll, child: const Text('الكل')),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   bool _isColorDark(int color) {
@@ -206,6 +464,8 @@ class _NoteEditorScreenState extends State<NoteEditorScreen> {
           isRtl: _isRtl,
           reminderTime: _reminderTime,
           reminderRepeat: _reminderRepeat,
+          isPinned: _isPinned,
+          folder: _folder,
         );
         _currentNote = await provider.addNote(newNote);
       } else {
@@ -221,6 +481,8 @@ class _NoteEditorScreenState extends State<NoteEditorScreen> {
         _currentNote!.isRtl = _isRtl;
         _currentNote!.reminderTime = _reminderTime;
         _currentNote!.reminderRepeat = _reminderRepeat;
+        _currentNote!.isPinned = _isPinned;
+        _currentNote!.folder = _folder;
         await provider.updateNote(_currentNote!);
       }
 
@@ -556,10 +818,15 @@ class _NoteEditorScreenState extends State<NoteEditorScreen> {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('التعرف على الصوت غير متاح')));
       return;
     }
+    final continuous =
+        context.read<SettingsProvider>().continuousSpeech;
     setState(() => _isListening = true);
-    MediaHelper.startListening((text) {
-      if (text.trim().isNotEmpty) _insertTextAtCursor(text);
-    });
+    MediaHelper.startListening(
+      (text) {
+        if (text.trim().isNotEmpty) _insertTextAtCursor(text);
+      },
+      continuous: continuous,
+    );
   }
 
   Future<void> _pickReminder() async {
@@ -585,6 +852,7 @@ class _NoteEditorScreenState extends State<NoteEditorScreen> {
           SimpleDialogOption(onPressed: () => Navigator.pop(ctx, 0), child: const Text('مرة واحدة')),
           SimpleDialogOption(onPressed: () => Navigator.pop(ctx, 1), child: const Text('يومياً')),
           SimpleDialogOption(onPressed: () => Navigator.pop(ctx, 2), child: const Text('أسبوعياً')),
+          SimpleDialogOption(onPressed: () => Navigator.pop(ctx, 3), child: const Text('شهرياً')),
         ],
       ),
     );
@@ -621,10 +889,56 @@ class _NoteEditorScreenState extends State<NoteEditorScreen> {
           children: [
             ListTile(
               leading: Icon(_isListening ? Icons.mic : Icons.mic_none, color: _isListening ? Colors.red : null),
-              title: const Text('تحويل الصوت إلى نص'),
+              title: Text(_isListening ? 'إيقاف التعرف على الصوت' : 'تحويل الصوت إلى نص'),
               onTap: () {
                 Navigator.pop(context);
                 _toggleSpeech();
+              },
+            ),
+            ListTile(
+              leading: Icon(_isPinned ? Icons.push_pin : Icons.push_pin_outlined),
+              title: Text(_isPinned ? 'إلغاء التثبيت' : 'تثبيت في الأعلى'),
+              onTap: () {
+                Navigator.pop(context);
+                setState(() {
+                  _isPinned = !_isPinned;
+                  _isDirty = true;
+                });
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.find_replace),
+              title: const Text('بحث واستبدال'),
+              onTap: () {
+                Navigator.pop(context);
+                _toggleFindReplace();
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.history),
+              title: const Text('سجل التعديلات'),
+              onTap: () {
+                Navigator.pop(context);
+                _showRevisions();
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.link),
+              title: const Text('مشاركة رابط محمي'),
+              onTap: () {
+                Navigator.pop(context);
+                _shareProtectedLink();
+              },
+            ),
+            ListTile(
+              leading: Icon(_readOnlyMode ? Icons.edit : Icons.menu_book_outlined),
+              title: Text(_readOnlyMode ? 'وضع التحرير' : 'وضع القراءة'),
+              onTap: () {
+                Navigator.pop(context);
+                setState(() {
+                  _readOnlyMode = !_readOnlyMode;
+                  _controller.readOnly = _readOnlyMode;
+                });
               },
             ),
             ListTile(
@@ -850,7 +1164,33 @@ class _NoteEditorScreenState extends State<NoteEditorScreen> {
           }
         }
       },
-      child: Scaffold(
+      child: CallbackShortcuts(
+        bindings: <ShortcutActivator, VoidCallback>{
+          const SingleActivator(LogicalKeyboardKey.keyS, control: true): () => _saveNote(),
+          const SingleActivator(LogicalKeyboardKey.keyF, control: true): _toggleFindReplace,
+          const SingleActivator(LogicalKeyboardKey.keyH, control: true): _toggleFindReplace,
+          const SingleActivator(LogicalKeyboardKey.keyB, control: true): () {
+            _controller.formatSelection(Attribute.bold);
+          },
+          const SingleActivator(LogicalKeyboardKey.keyI, control: true): () {
+            _controller.formatSelection(Attribute.italic);
+          },
+          const SingleActivator(LogicalKeyboardKey.keyU, control: true): () {
+            _controller.formatSelection(Attribute.underline);
+          },
+          const SingleActivator(LogicalKeyboardKey.keyZ, control: true): () {
+            if (_controller.hasUndo) _controller.undo();
+          },
+          const SingleActivator(LogicalKeyboardKey.keyY, control: true): () {
+            if (_controller.hasRedo) _controller.redo();
+          },
+          const SingleActivator(LogicalKeyboardKey.keyZ, control: true, shift: true): () {
+            if (_controller.hasRedo) _controller.redo();
+          },
+        },
+        child: Focus(
+          autofocus: true,
+          child: Scaffold(
         resizeToAvoidBottomInset: true,
         appBar: AppBar(
           backgroundColor: Theme.of(context).appBarTheme.backgroundColor,
@@ -880,6 +1220,7 @@ class _NoteEditorScreenState extends State<NoteEditorScreen> {
             ),
             child: TextField(
               controller: _titleController,
+              readOnly: _readOnlyMode,
               decoration: const InputDecoration(
                 hintText: 'عنوان الملاحظة',
                 border: InputBorder.none,
@@ -890,6 +1231,15 @@ class _NoteEditorScreenState extends State<NoteEditorScreen> {
           ),
           ),
           actions: [
+            if (!_focusMode)
+              IconButton(
+                icon: Icon(_isPinned ? Icons.push_pin : Icons.push_pin_outlined),
+                tooltip: _isPinned ? 'إلغاء التثبيت' : 'تثبيت',
+                onPressed: () => setState(() {
+                  _isPinned = !_isPinned;
+                  _isDirty = true;
+                }),
+              ),
             IconButton(
               icon: const Icon(Icons.save),
               onPressed: () => _saveNote(),
@@ -905,6 +1255,7 @@ class _NoteEditorScreenState extends State<NoteEditorScreen> {
         ),
         body: Column(
           children: [
+            if (_findReplaceVisible && !_focusMode) _buildFindReplaceBar(),
             Expanded(
               child: Listener(
                 onPointerSignal: (pointerSignal) {
@@ -912,8 +1263,16 @@ class _NoteEditorScreenState extends State<NoteEditorScreen> {
                     _handleZoom(pointerSignal.scrollDelta.dy > 0 ? -1 : 1);
                   }
                 },
-                child: Container(
-                  margin: const EdgeInsets.all(12),
+                child: Align(
+                  alignment: Alignment.topCenter,
+                  child: Container(
+                  margin: EdgeInsets.symmetric(
+                    horizontal: MediaQuery.sizeOf(context).width >= 900 ? 48 : 12,
+                    vertical: 12,
+                  ),
+                  constraints: BoxConstraints(
+                    maxWidth: MediaQuery.sizeOf(context).width >= 1200 ? 900 : double.infinity,
+                  ),
                   decoration: BoxDecoration(
                     color: _cardColor != 0 ? Color(_cardColor) : Theme.of(context).cardColor,
                     borderRadius: BorderRadius.circular(16),
@@ -935,6 +1294,8 @@ class _NoteEditorScreenState extends State<NoteEditorScreen> {
                               painter: RuledPaperPainter(
                                 lineHeight: _fontSizeBase + 12,
                                 showLineNumbers: settings.showLineNumbers,
+                                textured: settings.paperTexture,
+                                showHolePunches: settings.paperHoles,
                               ),
                             ),
                           ),
@@ -977,10 +1338,11 @@ class _NoteEditorScreenState extends State<NoteEditorScreen> {
                     ),
                   ),
                 ),
+                ),
               ),
             ),
-            if (!_focusMode) _buildSelectionActions(),
-            if (!_focusMode)
+            if (!_focusMode && !_readOnlyMode) _buildSelectionActions(),
+            if (!_focusMode && !_readOnlyMode)
             QuillSimpleToolbar(
               controller: _controller,
               config: const QuillSimpleToolbarConfig(
@@ -1001,6 +1363,8 @@ class _NoteEditorScreenState extends State<NoteEditorScreen> {
             ),
             if (!_focusMode) _buildBottomBar(),
           ],
+        ),
+      ),
         ),
       ),
     );

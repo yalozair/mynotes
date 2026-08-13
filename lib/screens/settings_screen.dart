@@ -182,12 +182,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ListTile(
               leading: const Icon(Icons.privacy_tip_outlined),
               title: const Text('صلاحيات أندرويد 13/14'),
-              subtitle: const Text('قد يطلب النظام صلاحيات الإشعارات، الصور، الميكروفون، والكاميرا بشكل منفصل — فعّلها من إعدادات التطبيق عند الحاجة'),
+              subtitle: const Text(
+                'أندرويد 13+: إشعارات منفصلة (POST_NOTIFICATIONS)، صور عبر READ_MEDIA_IMAGES، '
+                'وميكروفون/كاميرا عند الاستخدام. التخزين القديم محدود لإصدارات أقدم فقط.',
+              ),
               isThreeLine: true,
               trailing: TextButton(
-                onPressed: () => openAppSettings(),
-                child: const Text('فتح الإعدادات'),
+                onPressed: () async {
+                  await PermissionHelper.ensureAllGranted(context);
+                },
+                child: const Text('مراجعة'),
               ),
+              onLongPress: () => openAppSettings(),
             ),
           
           _sectionTitle('المحرر والتخطيط'),

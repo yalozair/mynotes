@@ -17,6 +17,7 @@ import './helpers/encryption_helper.dart';
 import './helpers/ad_helper.dart';
 import './helpers/reminder_helper.dart';
 import './helpers/analytics_helper.dart';
+import './helpers/drive_backup_helper.dart';
 import './services/app_firebase_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:timezone/data/latest_all.dart' as tz_data;
@@ -128,6 +129,10 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       AdHelper.showAppOpenAd();
+      DriveBackupHelper.runWeeklyIfDue().catchError((e) {
+        debugPrint('Weekly Drive backup skipped: $e');
+        return null;
+      });
     });
   }
 

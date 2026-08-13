@@ -9,6 +9,8 @@ class MediaHelper {
   static final stt.SpeechToText _speech = stt.SpeechToText();
   static bool _continuous = false;
   static String _lastFinal = '';
+  static void Function(String text)? _onFinal;
+  static void Function(String partial)? _onPartial;
 
   static Future<String?> pickImageAndRecognizeText(ImageSource source) async {
     try {
@@ -27,17 +29,9 @@ class MediaHelper {
     return await _speech.initialize(
       onStatus: (status) {
         if (_continuous && (status == 'done' || status == 'notListening')) {
-          // Restart for continuous dictation
           Future.delayed(const Duration(milliseconds: 250), () {
-            if (_continuous && !_speech.isListening) {
-              _speech.listen(
-                onResult: (_) {},
-                listenMode: stt.ListenMode.dictation,
-                partialResults: true,
-                listenFor: const Duration(minutes: 30),
-                pauseFor: const Duration(seconds: 5),
-                localeId: 'ar_SA',
-              );
+            if (_continuous && !_speech.isListening && _onFinal != null) {
+              _beginListen();
             }
           });
         }
@@ -54,6 +48,14 @@ class MediaHelper {
   }) {
     _continuous = continuous;
     _lastFinal = '';
+    _onFinal = onFinalResult;
+    _onPartial = onPartial;
+    _beginListen();
+  }
+
+  static void _beginListen() {
+    final onFinal = _onFinal;
+    if (onFinal == null) return;
     _speech.listen(
       onResult: (result) {
         if (result.finalResult) {
@@ -64,25 +66,26 @@ class MediaHelper {
             delta = words.substring(_lastFinal.length).trim();
           }
           _lastFinal = words;
-          if (delta.isNotEmpty) onFinalResult(delta);
-          if (continuous) {
-            // Reset baseline for next utterance
+          if (delta.isNotEmpty) onFinal(delta);
+          if (_continuous) {
             _lastFinal = '';
           }
         } else {
-          onPartial?.call(result.recognizedWords);
+          _onPartial?.call(result.recognizedWords);
         }
       },
-      listenMode: continuous ? stt.ListenMode.dictation : stt.ListenMode.confirmation,
+      listenMode: _continuous ? stt.ListenMode.dictation : stt.ListenMode.confirmation,
       partialResults: true,
-      listenFor: continuous ? const Duration(minutes: 30) : const Duration(seconds: 30),
-      pauseFor: continuous ? const Duration(seconds: 5) : const Duration(seconds: 3),
+      listenFor: _continuous ? const Duration(minutes: 30) : const Duration(seconds: 30),
+      pauseFor: _continuous ? const Duration(seconds: 5) : const Duration(seconds: 3),
       localeId: 'ar_SA',
     );
   }
 
   static void stopListening() {
     _continuous = false;
+    _onFinal = null;
+    _onPartial = null;
     _speech.stop();
   }
 
@@ -90,7 +93,7 @@ class MediaHelper {
   static bool get isContinuous => _continuous;
 
   static void dispose() {
-    _continuous = false;
+    stopListening();
     _textRecognizer.close();
   }
 }
