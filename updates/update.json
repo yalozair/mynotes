@@ -1,0 +1,16 @@
+{
+  "versionName": "1.0.4",
+  "versionCode": 5,
+  "mandatory": false,
+  "changelog": [
+    "تحديث داخل التطبيق: تنزيل APK مع شريط تقدّم وفتح المثبّت مباشرة",
+    "ملف update.json للمقارنة عبر versionCode",
+    "دعم التحديث الإجباري (mandatory)",
+    "ويندوز/سطح المكتب: فتح رابط التنزيل في المتصفح"
+  ],
+  "apkUrl": "https://github.com/yalozair/mynotes/releases/download/v1.0.4/mofkarti-v1.0.4-android.apk",
+  "windowsUrl": "https://github.com/yalozair/mynotes/releases/tag/v1.0.4",
+  "linuxUrl": "https://github.com/yalozair/mynotes/releases/tag/v1.0.4",
+  "webUrl": "https://github.com/yalozair/mynotes/releases/download/v1.0.4/mofkarti-v1.0.4-web.zip",
+  "publishedAt": "2026-08-15"
+}

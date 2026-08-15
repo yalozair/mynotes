@@ -1,0 +1,17 @@
+{
+  "versionName": "1.0.3",
+  "versionCode": 4,
+  "mandatory": false,
+  "changelog": [
+    "تحسينات الامتثال والخصوصية والإعلانات (UMP)",
+    "تشفير المذكرة برمز PIN",
+    "بحث واستبدال، تثبيت، سجل نسخ سابقة، ومجلدات",
+    "تحديث داخل التطبيق مع شريط تحميل (أندرويد)",
+    "نسخ Drive أسبوعي وإحصائيات سلسلة الأيام"
+  ],
+  "apkUrl": "https://github.com/yalozair/mynotes/releases/download/v1.0.3/mofkarti-v1.0.3-android.apk",
+  "windowsUrl": "https://github.com/yalozair/mynotes/releases/tag/v1.0.3",
+  "linuxUrl": "https://github.com/yalozair/mynotes/releases/tag/v1.0.3",
+  "webUrl": "https://github.com/yalozair/mynotes/releases/download/v1.0.3/mofkarti-v1.0.3-web.zip",
+  "publishedAt": "2026-08-13"
+}

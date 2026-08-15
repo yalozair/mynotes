@@ -464,7 +464,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 subtitle: Text('v$version'),
                 trailing: IconButton(
                   icon: const Icon(Icons.system_update),
-                  onPressed: () => UpdateHelper.checkForUpdate(context),
+                  onPressed: () => UpdateHelper.checkForUpdate(context, silent: false),
                   tooltip: 'التحقق من التحديث',
                 ),
               );
